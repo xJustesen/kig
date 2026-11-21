@@ -1,4 +1,4 @@
 .venv/
 __pycache__/
-*.html
+/*.html
 .pytest_cache/

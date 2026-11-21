@@ -6,6 +6,7 @@ import json
 from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
+from string import Template
 
 import numpy as np
 
@@ -83,40 +84,12 @@ def _embed(value) -> str:
 def build_report(store: Store, out: str | Path, title: str = "kig report") -> Path:
     """Write the report as one static HTML file with all data, styles and scripts inside; return its path (Path)."""
     static = files("kig").joinpath("static")
-    title = html.escape(title)
-    # Each model view is one inline module. An inline module cannot be imported, so one added line hands
-    # its `render` to the report shell.
-    views = "\n".join(
-        f'<script type="module">\n{v.js.replace("</script", "<\\/script")}\n'
-        f'(globalThis.kigViews ??= {{}})[{_embed(v.name)}] = {{ render }};\n</script>' for v in model_views())
-    page = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>{title}</title>
-<style>
-{static.joinpath("report.css").read_text(encoding="utf-8")}
-</style>
-</head>
-<body>
-<div class="page">
-  <p class="tool">{title}</p>
-  <h1 class="crumbs" id="crumbs"></h1>
-  <p class="lede" id="lede"></p>
-  <div id="tabs"></div>
-  <div class="controls" id="controls"></div>
-  <main id="view"></main>
-  <p class="foot">Loss reduction is the part of the loss change that belongs to one feature, per row. A positive value lowers the loss and a negative value raises it. Mean |SHAP| shows how much a feature moves the prediction, and it cannot tell a useful feature from a harmful feature. All numbers come from development data.</p>
-</div>
-<script type="application/json" id="kig-data">{_embed(report_data(store))}</script>
-{views}
-<script type="module">
-{static.joinpath("app.js").read_text(encoding="utf-8")}
-</script>
-</body>
-</html>
-"""
+    text = {name: static.joinpath(name).read_text(encoding="utf-8")
+            for name in ("report.html", "view.html", "report.css", "app.js")}
+    views = "".join(Template(text["view.html"]).substitute(js=v.js.replace("</script", "<\\/script"), name=_embed(v.name))
+                    for v in model_views())
+    page = Template(text["report.html"]).substitute(title=html.escape(title), css=text["report.css"],
+                                                    data=_embed(report_data(store)), views=views, app=text["app.js"])
     out = Path(out)
     out.write_text(page, encoding="utf-8")
     return out
