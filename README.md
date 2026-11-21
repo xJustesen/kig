@@ -52,6 +52,18 @@ uv run python tests/toy.py report.html
 
 ## 📖 Usage
 
+For one fitted model, one call writes the report:
+
+```python
+import kig
+
+kig.diagnose(model, X, y, sets={"train": idx_train, "valid": idx_valid}, out="report.html")
+```
+
+`features` and `loss` are optional arguments, with the defaults of `summarize` below.
+
+For more than one model, for example walk-forward steps and k-folds, give the runs and their levels:
+
 ```python
 from kig.core import Level, Run, summarize
 from kig.report import build_report
