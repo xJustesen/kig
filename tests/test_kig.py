@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import kig
 import toy
 from kig.aggregate import group_view
 from kig.core import Level, Run, explainer_for, register_explainer, register_view, summarize
@@ -236,6 +237,14 @@ def test_array_with_no_feature_names_is_refused(linear, tmp_path):
     X, y, runs = linear
     with pytest.raises(TypeError):
         summarize(runs, X, y, Store(tmp_path), levels=LINEAR_LEVELS, loss=toy.mse_loss)
+
+
+def test_one_call_writes_the_report_of_one_fitted_model(linear, tmp_path):
+    X, y, _ = linear
+    frame = pd.DataFrame(X, columns=LINEAR_FEATURES)
+    model = pytest.importorskip("sklearn.linear_model").Ridge().fit(frame[:150], y[:150])
+    kig.diagnose(model, frame, y, sets={"train": np.arange(150), "valid": np.arange(150, 300)}, out=tmp_path / "r.html")
+    assert "Ridge" in (tmp_path / "r.html").read_text(encoding="utf-8")
 
 
 def test_precomputed_attributions_give_the_sums_of_the_model(linear, tmp_path):
