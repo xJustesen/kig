@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from kig.core import VALID
 from kig.store import Store
 
 OWN = "own"
@@ -48,3 +49,12 @@ def group_view(store: Store, prefix: tuple[str, ...] = ()) -> pd.DataFrame:
     view = table[path.map(lambda p: p[:depth] == prefix and len(p) <= depth + 1)]
     child = path[view.index].map(lambda p: p[depth] if len(p) > depth else None)
     return view.assign(child=child).reset_index(drop=True)
+
+
+def summary_metrics(store: Store) -> dict[str, float]:
+    """Return two metrics (dict[str, float]) of the top node on the validation set: the count of features with a negative gain and the lowest gain."""
+    view = group_view(store)
+    top = view[view.child.isna() & (view.set == VALID)]
+    own = top[top.source == OWN]
+    gain = (own if len(own) else top).gain
+    return {"kig/negative_valid_features": float((gain < 0).sum()), "kig/min_valid_gain": float(gain.min())}
