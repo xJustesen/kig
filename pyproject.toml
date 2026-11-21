@@ -13,10 +13,11 @@ catboost = ["catboost"]
 sklearn = ["scikit-learn"]
 shap = ["shap"]
 mlflow = ["mlflow"]
-all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow"]
+wandb = ["wandb"]
+all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow", "wandb"]
 
 [dependency-groups]
-dev = ["pytest", "ruff", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow"]
+dev = ["pytest", "ruff", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow", "wandb"]
 
 [build-system]
 requires = ["hatchling"]

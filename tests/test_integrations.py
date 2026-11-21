@@ -1,15 +1,19 @@
 """Tests of the integrations: each logger sends a store to a local tracker and reads it back."""
 
+import shutil
+
 import mlflow
 import numpy as np
 import pandas as pd
 import pytest
 import toy
+import wandb
 
 from kig.aggregate import group_view, summary_metrics
 from kig.core import Level, Run, summarize
 from kig.explainers import PrecomputedExplainer
 from kig.integrations import mlflow as kig_mlflow
+from kig.integrations import wandb as kig_wandb
 from kig.store import Store
 
 
@@ -40,3 +44,28 @@ def test_mlflow_run_gets_the_store_the_report_and_the_metrics(store, tmp_path, m
     pd.testing.assert_frame_equal(group_view(kig_mlflow.load_store(run.info.run_id)), group_view(store))
     assert mlflow.artifacts.list_artifacts(run_id=run.info.run_id, artifact_path="kig")[0].path == "kig/report.html"
     assert mlflow.get_run(run.info.run_id).data.metrics == summary_metrics(store)
+
+
+def test_wandb_offline_run_gets_the_store_the_report_and_the_metrics(store, tmp_path, monkeypatch):
+    for name in ("WANDB_DIR", "WANDB_CACHE_DIR", "WANDB_DATA_DIR", "WANDB_CONFIG_DIR"):
+        monkeypatch.setenv(name, str(tmp_path))
+    with wandb.init(mode="offline") as run:
+        staged = []
+        log_artifact = run.log_artifact
+        monkeypatch.setattr(run, "log_artifact", lambda artifact: staged.append(artifact) or log_artifact(artifact))
+
+        class Server:
+            def artifact(self, name, type):
+                return self
+
+            def download(self):
+                for entry in staged[0].manifest.entries.values():
+                    shutil.copy(entry.local_path, tmp_path / entry.path)
+                return tmp_path
+
+        # An offline run cannot download an artifact, so the files that the run staged stand in for the server.
+        monkeypatch.setattr(wandb, "Api", Server)
+        kig_wandb.log_kig(store, run)
+        pd.testing.assert_frame_equal(group_view(kig_wandb.load_store("kig-store:latest")), group_view(store))
+        assert run.summary.get("kig/report") is not None
+        assert {name: run.summary[name] for name in summary_metrics(store)} == summary_metrics(store)

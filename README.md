@@ -111,6 +111,17 @@ with mlflow.start_run() as run:
 store = load_store(run.info.run_id)  # a local copy of the store of a tracked run
 ```
 
+**Weights & Biases**, with the `wandb` extra:
+
+```python
+import wandb
+from kig.integrations.wandb import load_store, log_kig
+
+with wandb.init(project="my-project") as run:
+    log_kig(store)  # the store as a `kig-store` artifact, the report as HTML, two summary metrics
+store = load_store("my-project/kig-store:latest")  # a local copy of the store of an artifact
+```
+
 The metrics are for the validation set of the top node: `kig/negative_valid_features` is the number
 of features with a negative gain, and `kig/min_valid_gain` is the lowest gain of a feature.
 
