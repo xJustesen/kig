@@ -15,11 +15,14 @@ shap = ["shap"]
 all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
 
 [dependency-groups]
-dev = ["pytest", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
+dev = ["pytest", "ruff", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
