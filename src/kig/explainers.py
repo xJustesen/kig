@@ -11,6 +11,44 @@ import numpy as np
 from kig.core import register_explainer
 
 
+def _squared_error(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return half the squared error (np.ndarray) of each row."""
+    return 0.5 * (raw - y) ** 2
+
+
+def _squared_error_grad(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return the gradient (np.ndarray) of half the squared error in the raw score."""
+    return raw - y
+
+
+def _log_loss(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return the binary log loss (np.ndarray) of each row for labels 0 and 1 and a logit."""
+    return np.logaddexp(0.0, raw) - y * raw
+
+
+def _log_loss_grad(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return the gradient (np.ndarray) of the binary log loss in the logit."""
+    return np.exp(-np.logaddexp(0.0, -raw)) - y
+
+
+_SQUARED_ERROR = (_squared_error, _squared_error_grad)
+_LOG_LOSS = (_log_loss, _log_loss_grad)
+_OBJECTIVES = {
+    "regression": _SQUARED_ERROR,
+    "binary sigmoid:1": _LOG_LOSS,
+    "reg:squarederror": _SQUARED_ERROR,
+    "binary:logistic": _LOG_LOSS,
+    "RMSE": _SQUARED_ERROR,
+    "Logloss": _LOG_LOSS,
+    "squared_error": _SQUARED_ERROR,
+    "log_loss": _LOG_LOSS,
+}
+_SKLEARN_MODELS_WITH_ONE_LOSS = {
+    **dict.fromkeys(("LinearRegression", "Ridge", "Lasso", "ElasticNet"), "squared_error"),
+    "LogisticRegression": "log_loss",
+}
+
+
 # A LightGBM booster keeps the iteration range of a prediction in its own state, so one booster in more
 # than one run gives wrong slices when threads predict at the same time.
 _LIGHTGBM_LOCK = threading.Lock()
@@ -24,9 +62,11 @@ class LightGBMExplainer:
     def __init__(self, model):
         if model.num_model_per_iteration() > 1:
             raise TypeError("multiclass models are not supported")
-        if model.dump_model(num_iteration=1)["average_output"]:
+        dump = model.dump_model(num_iteration=1)
+        if dump["average_output"]:
             raise TypeError("a booster that averages its trees (boosting='rf') has no additive stage axis")
         self.model = model
+        self.loss_and_grad = _OBJECTIVES.get(dump.get("objective"))
         self.n_stages = model.best_iteration if model.best_iteration > 0 else model.current_iteration()
 
     def slices(self, X) -> Iterator[np.ndarray]:
@@ -48,6 +88,7 @@ class XGBoostExplainer:
             raise TypeError("multiclass and multi-output models are not supported")
         self.model = model
         self.missing = missing
+        self.loss_and_grad = _OBJECTIVES.get(learner["objective"]["name"])
         if learner["gradient_booster"]["name"] == "gblinear":
             self.n_stages = 1
         elif best_iteration is None:
@@ -83,6 +124,7 @@ class CatBoostExplainer:
             raise TypeError("multiclass and multi-output models are not supported")
         self.model = model
         self.n_stages = model.tree_count_
+        self.loss_and_grad = _OBJECTIVES.get(model.get_all_params()["loss_function"])
 
     def slices(self, X) -> Iterator[np.ndarray]:
         """Yield the attributions (np.ndarray) of each boosting round in the raw score space."""
@@ -94,6 +136,12 @@ class CatBoostExplainer:
             tree = self.model.copy()
             tree.shrink(ntree_start=t, ntree_end=t + 1)
             yield tree.get_feature_importance(type="ShapValues", data=pool)
+
+
+def _sklearn_loss(model) -> tuple | None:
+    """Return the loss and its gradient (tuple | None) of a scikit-learn model by its loss, criterion or class."""
+    fixed = _SKLEARN_MODELS_WITH_ONE_LOSS.get(type(model).__name__)
+    return _OBJECTIVES.get(getattr(model, "loss", None) or getattr(model, "criterion", None) or fixed)
 
 
 class LinearExplainer:
@@ -109,6 +157,7 @@ class LinearExplainer:
         self.coef = coef[0]
         self.reference = np.zeros(len(self.coef)) if reference is None else np.asarray(reference, dtype=float)
         self.base = np.asarray(model.intercept_).item() + self.coef @ self.reference
+        self.loss_and_grad = _sklearn_loss(model)
 
     def slices(self, X) -> Iterator[np.ndarray]:
         """Yield the attributions (np.ndarray) relative to the reference point in the raw score space."""
@@ -149,7 +198,9 @@ def _tree_shap(model) -> ShapExplainer:
         )
     import shap
 
-    return ShapExplainer(shap.TreeExplainer(model))
+    explainer = ShapExplainer(shap.TreeExplainer(model))
+    explainer.loss_and_grad = _sklearn_loss(model)
+    return explainer
 
 
 class PrecomputedExplainer:
@@ -195,10 +246,20 @@ class OneStageExplainer:
     def __init__(self, explainer):
         self.explainer = explainer
         self.by_index = getattr(explainer, "by_index", False)
+        self.loss_and_grad = getattr(explainer, "loss_and_grad", None)
 
     def slices(self, X) -> Iterator[np.ndarray]:
         """Yield the sum (np.ndarray) of all slices of the staged explainer."""
         yield sum(self.explainer.slices(X))
+
+
+def _xgboost_wrapper(model) -> XGBoostExplainer:
+    """Return the explainer (XGBoostExplainer) of a scikit-learn wrapper of XGBoost (xgboost.sklearn.XGBModel)."""
+    explainer = XGBoostExplainer(model.get_booster(), getattr(model, "best_iteration", None), model.missing)
+    # The booster of a wrapper with a custom objective reports the default objective.
+    if callable(model.objective):
+        explainer.loss_and_grad = None
+    return explainer
 
 
 def register_builtin_explainers() -> None:
@@ -206,10 +267,7 @@ def register_builtin_explainers() -> None:
     register_explainer("lightgbm.basic.Booster", LightGBMExplainer)
     register_explainer("lightgbm.sklearn.LGBMModel", lambda model: LightGBMExplainer(model.booster_))
     register_explainer("xgboost.core.Booster", XGBoostExplainer)
-    register_explainer(
-        "xgboost.sklearn.XGBModel",
-        lambda model: XGBoostExplainer(model.get_booster(), getattr(model, "best_iteration", None), model.missing),
-    )
+    register_explainer("xgboost.sklearn.XGBModel", _xgboost_wrapper)
     register_explainer("catboost.core.CatBoost", CatBoostExplainer)
     for name in ("_base.LinearModel", "_base.LinearClassifierMixin", "_stochastic_gradient.BaseSGDRegressor"):
         register_explainer(f"sklearn.linear_model.{name}", LinearExplainer)
