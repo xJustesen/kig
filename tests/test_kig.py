@@ -1,6 +1,8 @@
 """Acceptance tests at the four seams: summary pass, aggregation, report data and extension contracts."""
 
 from dataclasses import dataclass
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 
 import numpy as np
 import pandas as pd
@@ -8,6 +10,7 @@ import pytest
 
 import toy
 from kig.aggregate import group_view
+from kig.cli import main
 from kig.core import Level, Run, explainer_for, register_explainer, register_view, summarize
 from kig.explainers import (
     CheckpointExplainer,
@@ -180,6 +183,30 @@ def test_overlap_counts_the_rows_in_both_the_train_set_and_the_validation_set(li
     sets = store.read("sets").set_index(["run_id", "set"])
     assert sets.overlap_with_train[("fold=1", "valid")] == 0
     assert sets.overlap_with_train[("fold=2", "valid")] == 10
+
+
+def test_report_command_writes_the_report_of_the_toy_store(toy_p09, tmp_path):
+    main(["report", str(toy_p09[3].path), "-o", str(tmp_path / "toy.html"), "--title", "toy"])
+    assert "<title>toy</title>" in (tmp_path / "toy.html").read_text(encoding="utf-8")
+
+
+def test_serve_command_serves_the_report_of_the_toy_store(toy_p09, monkeypatch):
+    pages = []
+
+    def one_request(server):
+        connection = HTTPConnection("localhost", server.server_address[1])
+        connection.request("GET", "/")
+        server.handle_request()
+        pages.append(connection.getresponse().read())
+
+    monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", one_request)
+    main(["serve", str(toy_p09[3].path), "--port", "0"])
+    assert b'id="kig-data"' in pages[0]
+
+
+def test_command_refuses_a_store_with_no_runs(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["report", str(tmp_path)])
 
 
 def test_same_seed_gives_the_same_store(linear, tmp_path):

@@ -79,6 +79,15 @@ build_report(store, "report.html")  # one static HTML file, no server
   sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
 
+A store directory also gives the report from the command line, with no Python script:
+
+```bash
+kig report kig-store -o report.html --title "My model"  # write the report
+kig serve kig-store --port 8000                         # serve it on localhost
+```
+
+`kig serve` builds the report again when the store files change.
+
 <details><summary>Options of <code>summarize</code></summary>
 
 `grad`, `weights`, `max_rows` (default 5,000 for each set, `None` for all rows), `seed`, `n_jobs`,
