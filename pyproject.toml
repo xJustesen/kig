@@ -15,6 +15,9 @@ shap = ["shap"]
 mlflow = ["mlflow"]
 all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow"]
 
+[project.scripts]
+kig = "kig.cli:main"
+
 [dependency-groups]
 dev = ["pytest", "ruff", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap", "mlflow"]
 
