@@ -203,6 +203,7 @@ def _summarize_run(run: Run, key: str, X, y, weights, features, loss, grad, max_
         stage_label=explainer.stage_label,
         cache_key=key,
     )
+    take = X.iloc if isinstance(X, pd.DataFrame) else X
     sets, stage_loss, summary, sampled = [], [], [], {}
     for name, full in run.sets.items():
         idx = np.asarray(full)
@@ -210,7 +211,7 @@ def _summarize_run(run: Run, key: str, X, y, weights, features, loss, grad, max_
             idx = np.sort(np.random.default_rng(seed).choice(idx, max_rows, replace=False))
         sampled[name] = idx
         w = np.ones(len(idx)) if weights is None else np.asarray(weights, dtype=float)[idx]
-        rows = idx if getattr(explainer, "by_index", False) else X[idx]
+        rows = idx if getattr(explainer, "by_index", False) else take[idx]
         sums = _reduce(explainer, rows, y[idx], w, loss, grad, n_feat)
         overlap = len(np.intersect1d(run.sets[TRAIN], full)) if TRAIN in run.sets else 0
         sets.append(dict(run_id=rid, set=name, n=float(w.sum()), overlap_with_train=overlap))
@@ -253,7 +254,7 @@ def summarize(
     store: Store,
     *,
     levels: list[Level],
-    features: list[str],
+    features: list[str] | None = None,
     loss: Callable,
     grad: Callable | None = None,
     weights=None,
@@ -263,6 +264,8 @@ def summarize(
     cross_eval: bool = False,
 ) -> list[str]:
     """Write the sums of all runs to the store and return the ids (list[str]) of the runs that were not in the cache."""
+    if features is None and not isinstance(X, pd.DataFrame):
+        raise TypeError("give `features` when `X` is not a pandas DataFrame")
     paths = [r.path for r in runs]
     if len(set(paths)) != len(paths):
         raise ValueError("each run must have a different path")
@@ -272,6 +275,8 @@ def summarize(
         raise ValueError("declare one level for each depth of the paths")
 
     y = np.asarray(y)
+    if features is None:
+        features = [str(name) for name in X.columns]
     if cross_eval:
         runs = _with_sibling_sets(runs)
     keys = {run_id(r.path): _cache_key(r, loss, grad, weights, max_rows, seed, features) for r in runs}
