@@ -1,10 +1,56 @@
-# kig
+<h1 align="center">👀 kig</h1>
 
-`kig` is a diagnostic tool for fitted models. It shows which features help or hurt, at which stage of the fit, and in which split.
+<p align="center">A diagnostic tool for fitted models: which features help or hurt, at which stage, in which split.</p>
 
-The tool never fits a model and never makes a split. You give it fitted models, row indices and a loss function. Give it development data only.
+<h4 align="center">
+  <a href="#-getting-started">Install</a>
+  ·
+  <a href="#-usage">Usage</a>
+  ·
+  <a href="#-supported-models">Models</a>
+  ·
+  <a href="#-explainers">Explainers</a>
+  ·
+  <a href="#-extend">Extend</a>
+</h4>
 
-## Use
+
+kig shows which features help or hurt a fitted model, at which stage of the fit, and in which
+split. It never fits a model and never makes a split: you give it fitted models, row indices and a
+loss function. Give it development data only.
+
+## ✨ Features
+
+- 👀 **Feature diagnostics** in the loss: which features help or hurt, by stage and by split
+- 🌲 **LightGBM, XGBoost, CatBoost and scikit-learn** models work with no explainer to write
+- 🪜 **Stage axis** for boosted models: one stage for each boosting round
+- 🗂️ **Run levels** such as walk-forward steps and k-folds, with a group view for each level
+- 📄 **One static HTML report**: no server
+- 💾 **Parquet store** with a cache: a run that is in the store is not computed again
+- 🔌 **Extensible**: register your own explainers and your own report tabs
+
+## ⚡️ Requirements
+
+- **Python** 3.11 or newer
+- [`uv`](https://docs.astral.sh/uv/) to install from a checkout
+- The library of your model, as an extra: `lightgbm`, `xgboost`, `catboost`, `sklearn`, `shap`
+  **_(optional)_**
+
+## 🚀 Getting Started
+
+Add kig to your project from a checkout of this repository, with the extras for your models:
+
+```bash
+uv add /path/to/kig --extra xgboost    # or --extra all
+```
+
+To try it first, build the report for the toy data in the checkout:
+
+```bash
+uv run python tests/toy.py report.html
+```
+
+## 📖 Usage
 
 ```python
 from kig.core import Level, Run, summarize
@@ -27,46 +73,103 @@ summarize(runs, X, y, store, levels=levels, features=names, loss=loss)
 build_report(store, "report.html")  # one static HTML file, no server
 ```
 
-- `X` must take a NumPy index array for its rows, for example a NumPy array. `y` can be an array or a pandas Series.
-- The set names `train` and `valid` have a meaning: the report uses them for the metrics. More sets are permitted.
-- `summarize` options: `grad`, `weights`, `max_rows` (default 5,000 for each set, `None` for all rows), `seed`, `n_jobs`, `cross_eval`.
-- A run whose cache key is in the store is not computed again.
-- The cache key holds the model, the row indices, the row sample, the loss function and the package version. It does not hold `X` or `y`: use a new store directory when the data changes and the model does not. The model must be picklable.
-- A LightGBM booster with `boosting='rf'` has no additive stage axis. The LightGBM explainer refuses it.
+- `X` must take a NumPy index array for its rows, for example a NumPy array. `y` can be an array
+  or a pandas Series.
+- The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
+  sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
 
-`uv run python tests/toy.py report.html` builds the report for the toy data.
+<details><summary>Options of <code>summarize</code></summary>
 
-## Supported models
+`grad`, `weights`, `max_rows` (default 5,000 for each set, `None` for all rows), `seed`, `n_jobs`,
+`cross_eval`.
 
-`Run(path, model, sets)` works with no explainer for these models. Each library is an optional extra. Install from a checkout of this repository, for example `pip install ".[xgboost]"` or `pip install ".[all]"`.
+</details>
 
-- **LightGBM** (`Booster`, `LGBMRegressor`, binary `LGBMClassifier`, `LGBMRanker`; extra `lightgbm`): one stage for each boosting round, up to the best iteration of a booster with early stopping.
-- **XGBoost** (`Booster`, `XGBRegressor`, binary `XGBClassifier`, `XGBRanker`; extra `xgboost`): one stage for each boosting round. XGBoost computes in float32, so its sums agree with its own prediction to approximately 1e-5, not 1e-9. A wrapper with early stopping uses the rounds up to its best iteration. A `gblinear` booster has one stage.
-- **CatBoost** (`CatBoostRegressor`, binary `CatBoostClassifier`; extra `catboost`): one stage for each boosting round. Symmetric trees only, which is the default grow policy.
-- **Linear models of scikit-learn** (`LinearRegression`, `Ridge`, `Lasso`, `ElasticNet`, `SGDRegressor`, binary `LogisticRegression` and the other models with the same base classes; extra `sklearn`): one stage, closed form. The attribution of a feature is `coef * (x - reference)`. The default reference is zero, which is correct for centred features. For other features, give `explainer=LinearExplainer(model, reference=X[idx_train].mean(0))`.
-- **Tree models of scikit-learn** (`RandomForestRegressor`, `ExtraTreesRegressor`, `GradientBoostingRegressor`, `HistGradientBoostingRegressor` and the binary classifiers of the two boosters; extras `sklearn` and `shap`): one stage, from `shap.TreeExplainer`. The forest classifiers have no raw score, so they are not supported.
+<details><summary>The cache</summary>
 
-All attributions are in the raw score space: the margin or the logit, not a probability. Your loss function must take the raw score. Multiclass and multi-output models are refused.
+- A run whose cache key is in the store is not computed again.
+- The cache key holds the model, the row indices, the row sample, the loss function and the
+  package version. It does not hold `X` or `y`: use a new store directory when the data changes
+  and the model does not.
+- The model must be picklable.
+
+</details>
+
+## 🧩 Supported models
+
+`Run(path, model, sets)` works with no explainer for these models:
+
+| Library | Models | Extra | Stages |
+|---|---|---|---|
+| **LightGBM** | `Booster`, `LGBMRegressor`, binary `LGBMClassifier`, `LGBMRanker` | `lightgbm` | one for each boosting round |
+| **XGBoost** | `Booster`, `XGBRegressor`, binary `XGBClassifier`, `XGBRanker` | `xgboost` | one for each boosting round |
+| **CatBoost** | `CatBoostRegressor`, binary `CatBoostClassifier` | `catboost` | one for each boosting round |
+| **scikit-learn, linear** | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet`, `SGDRegressor`, binary `LogisticRegression` and the other models with the same base classes | `sklearn` | one, closed form |
+| **scikit-learn, trees** | `RandomForestRegressor`, `ExtraTreesRegressor`, `GradientBoostingRegressor`, `HistGradientBoostingRegressor` and the binary classifiers of the two boosters | `sklearn`, `shap` | one, from `shap.TreeExplainer` |
+
+All attributions are in the raw score space: the margin or the logit, not a probability. Your loss
+function must take the raw score. Multiclass and multi-output models are refused.
+
+<details><summary>Notes for each library</summary>
+
+- **LightGBM**: a booster with early stopping uses the rounds up to its best iteration. A booster
+  with `boosting='rf'` has no additive stage axis, so the explainer refuses it.
+- **XGBoost**: XGBoost computes in float32, so its sums agree with its own prediction to
+  approximately 1e-5, not 1e-9. A wrapper with early stopping uses the rounds up to its best
+  iteration. A `gblinear` booster has one stage.
+- **CatBoost**: symmetric trees only, which is the default grow policy.
+- **scikit-learn, linear**: the attribution of a feature is `coef * (x - reference)`. The default
+  reference is zero, which is correct for centred features. For other features, give
+  `explainer=LinearExplainer(model, reference=X[idx_train].mean(0))`.
+- **scikit-learn, trees**: the forest classifiers have no raw score, so they are not supported.
+- A scikit-learn `Pipeline` has no explainer: the attributions must be for the columns of the
+  shared `X`.
+
+</details>
+
+## 🧠 Explainers
 
 More explainers in `kig.explainers`:
 
-- `ShapExplainer(shap_explainer)`: one stage from an explainer of the `shap` library that has `shap_values` and `expected_value`.
-- `CheckpointExplainer([explainer_1, explainer_2, ...])`: a staged explainer for a model with checkpoints, for example a neural network after each epoch. Each item is a one-stage explainer of one checkpoint.
-- `OneStageExplainer(explainer)`: the one-stage form of a staged explainer. One report cannot hold staged runs and one-stage runs, because their loss splits are not equal. To compare a boosted model with a linear model or a forest, wrap the staged runs: `Run(..., explainer=OneStageExplainer(LightGBMExplainer(model)))`. A wrapped run has no stage view. A booster with one round, for example after early stopping, is a one-stage run: if a report has such a run, wrap all its staged runs.
-- `PrecomputedExplainer(attributions)`: attributions that you computed before.
+- **`ShapExplainer(shap_explainer)`**: one stage from an explainer of the `shap` library that has
+  `shap_values` and `expected_value`.
+- **`CheckpointExplainer([explainer_1, explainer_2, ...])`**: a staged explainer for a model with
+  checkpoints, for example a neural network after each epoch. Each item is a one-stage explainer
+  of one checkpoint.
+- **`OneStageExplainer(explainer)`**: the one-stage form of a staged explainer. A wrapped run has
+  no stage view.
+- **`PrecomputedExplainer(attributions)`**: attributions that you computed before.
 
-A scikit-learn `Pipeline` has no explainer: the attributions must be for the columns of the shared `X`.
+One report cannot hold staged runs and one-stage runs, because their loss splits are not equal. To
+compare a boosted model with a linear model or a forest, wrap the staged runs:
 
-## Extend
-
-- **Explainer** (`kig.core.Explainer`): give `n_stages`, `stage_label` and `slices(X)`. Register it with `register_explainer(ModelClass, factory)`, or give it to a run with `Run(..., explainer=...)`. `kig.explainers.PrecomputedExplainer` takes attributions that you computed before.
-- **Model view** (`kig.core.ModelView`): give `name`, `applies_to`, `collect` and `js`. `js` is one module that exports `render(container, payload, api)`. Register it with `register_view(view)` before `summarize` and `build_report`. The report shows it as one tab.
-
-`api` in `render` has: `features`, `run` (the standard tables of the run), `valid` and `train` (set names), `colors`, `fmt`, `el` and `bars()`. `render` can return a function that the report calls before it removes the view.
-
-## Test
-
+```python
+Run(..., explainer=OneStageExplainer(LightGBMExplainer(model)))
 ```
+
+A booster with one round, for example after early stopping, is a one-stage run: if a report has
+such a run, wrap all its staged runs.
+
+## 🔌 Extend
+
+- **Explainer** (`kig.core.Explainer`): give `n_stages`, `stage_label` and `slices(X)`. Register
+  it with `register_explainer(ModelClass, factory)`, or give it to a run with
+  `Run(..., explainer=...)`.
+- **Model view** (`kig.core.ModelView`): give `name`, `applies_to`, `collect` and `js`. `js` is one
+  module that exports `render(container, payload, api)`. Register it with `register_view(view)`
+  before `summarize` and `build_report`. The report shows it as one tab.
+
+<details><summary>The <code>api</code> of <code>render</code></summary>
+
+`api` has `features`, `run` (the standard tables of the run), `valid` and `train` (set names),
+`colors`, `fmt`, `el` and `bars()`. `render` can return a function that the report calls before it
+removes the view.
+
+</details>
+
+## 🛠️ Development
+
+```bash
 uv run pytest
 ```
