@@ -38,3 +38,11 @@ class Store:
         if table == "runs":
             frame = frame.assign(path=frame["path"].map(list))
         frame.to_parquet(self.path / f"{table}.parquet", index=False)
+
+    def replace_runs(self, frames: dict[str, pd.DataFrame]) -> None:
+        """Write the run tables (dict[str, pd.DataFrame]); a write that stops in the middle leaves no run for the cache."""
+        self.write("runs", frames["runs"].iloc[:0])
+        for table, frame in frames.items():
+            if table != "runs":
+                self.write(table, frame)
+        self.write("runs", frames["runs"])

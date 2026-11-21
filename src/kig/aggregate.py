@@ -10,7 +10,7 @@ NESTED = "nested"
 
 
 def node_table(store: Store) -> pd.DataFrame:
-    """Return one row (pd.DataFrame) for each node ("/"-joined path prefix), source ("own" run or "nested" pool), set and feature."""
+    """Return one row (pd.DataFrame) for each node ("/"-joined prefix), source ("own" or "nested"), set and feature."""
     runs = store.read("runs")
     if (runs.n_stages > 1).nunique() > 1:
         raise ValueError("the staged split and the one-stage split must not be in one group view")
@@ -33,7 +33,7 @@ def node_table(store: Store) -> pd.DataFrame:
 
 
 def group_view(store: Store, prefix: tuple[str, ...] = ()) -> pd.DataFrame:
-    """Return the group-view table (pd.DataFrame) at a path prefix; the rows with no `child` are the pool and the own run of the prefix."""
+    """Return the group-view table (pd.DataFrame) at a path prefix; a row with no `child` belongs to the prefix."""
     table = node_table(store)
     depth = len(prefix)
     path = table.node.map(lambda node: tuple(node.split("/")) if node else ())

@@ -6,8 +6,16 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy", "pandas", "pyarrow"]
 
+[project.optional-dependencies]
+lightgbm = ["lightgbm"]
+xgboost = ["xgboost"]
+catboost = ["catboost"]
+sklearn = ["scikit-learn"]
+shap = ["shap"]
+all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
+
 [dependency-groups]
-dev = ["pytest", "lightgbm"]
+dev = ["pytest", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
 
 [build-system]
 requires = ["hatchling"]

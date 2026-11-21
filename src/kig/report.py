@@ -24,7 +24,8 @@ def _nodes(store: Store, paths: list[tuple[str, ...]], features: list[str]) -> d
     nodes = {}
     for path in paths:
         for depth in range(len(path) + 1):
-            node = nodes.setdefault("/".join(path[:depth]), dict(path=list(path[:depth]), children=[], own=None, nested=None))
+            node = nodes.setdefault("/".join(path[:depth]),
+                                    dict(path=list(path[:depth]), children=[], own=None, nested=None))
             if depth < len(path) and path[depth] not in node["children"]:
                 node["children"].append(path[depth])
     for node in nodes.values():
@@ -37,7 +38,8 @@ def _nodes(store: Store, paths: list[tuple[str, ...]], features: list[str]) -> d
 
 
 def _run_tables(summary, stage_loss, counts: dict[str, float], features: list[str]) -> dict:
-    loss = {name: (g.sort_values("stage").loss_sum / counts[name]).to_numpy() for name, g in stage_loss.groupby("set", sort=False)}
+    loss = {name: (g.sort_values("stage").loss_sum / counts[name]).to_numpy()
+            for name, g in stage_loss.groupby("set", sort=False)}
     n_stages = len(next(iter(loss.values())))
     stages = set(np.round(np.geomspace(1, n_stages, min(n_stages, MAX_BAR_STAGES))).astype(int) - 1)
     stages |= {int(np.argmin(v)) for name, v in loss.items() if name != TRAIN}
@@ -65,7 +67,8 @@ def report_data(store: Store) -> dict:
             path=list(run.path), note=run.note, model_kind=run.model_kind, n_stages=int(run.n_stages),
             stage_label=run.stage_label,
             sets={s.set: dict(n=float(s.n), overlap=int(s.overlap_with_train)) for s in mine.itertuples()},
-            **_run_tables(summary[summary.run_id == run.run_id], stage_loss[stage_loss.run_id == run.run_id], counts, features),
+            **_run_tables(summary[summary.run_id == run.run_id], stage_loss[stage_loss.run_id == run.run_id],
+                          counts, features),
             views=[dict(name=name, payload=json.loads(stored[name])) for name in registered if name in stored.index])
     levels = store.read("levels").sort_values("depth")
     return dict(version=version("kig"), features=features,

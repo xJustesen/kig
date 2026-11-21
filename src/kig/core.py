@@ -128,7 +128,7 @@ def _numeric_grad(loss) -> Callable:
 
 
 def _start_at_base(s: np.ndarray, n_feat: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return the start score and the slice of a one-stage model: the split starts at the base term, which gets no loss reduction."""
+    """Return the start score and the slice of a one-stage model: the base term starts the split and gets no gain."""
     return s[:, n_feat], np.column_stack([s[:, :n_feat], np.zeros(len(s))])
 
 
@@ -141,7 +141,7 @@ def _reduce(explainer: Explainer, rows, y, w, loss, grad, n_feat: int) -> dict[s
     base_gain_sum = np.empty(n_stages)
     a = np.zeros(len(y))
     cum = np.zeros((len(y), n_feat))
-    slices = iter(explainer.slices(rows))
+    slices = (np.asarray(s, dtype=float) for s in explainer.slices(rows))
     if n_stages == 1:
         a, only = _start_at_base(next(slices), n_feat)
         slices = [only]
@@ -220,13 +220,12 @@ def summarize(runs: list[Run], X, y, store: Store, *, levels: list[Level], featu
         new = list(pool.map(lambda r: _summarize_run(r, keys[run_id(r.path)], X, y, weights, features,
                                                      loss, grad, max_rows, seed), todo))
     order = {rid: i for i, rid in enumerate(keys)}
-    tables = ("sets", "stage_loss", "summary", "view_payload", "runs")
-    kept = {table: store.read(table) for table in tables}
-    # The cache reads the runs table: it is empty during the write and it is the last table on disk.
-    store.write("runs", old.iloc[:0])
-    for table in tables:
-        frame = pd.concat([kept[table][kept[table].run_id.isin(cached)], *(n[table] for n in new)], ignore_index=True)
-        store.write(table, frame.sort_values("run_id", key=lambda s: s.map(order), kind="stable", ignore_index=True))
+    frames = {}
+    for table in ("runs", "sets", "stage_loss", "summary", "view_payload"):
+        kept = store.read(table)
+        frame = pd.concat([kept[kept.run_id.isin(cached)], *(n[table] for n in new)], ignore_index=True)
+        frames[table] = frame.sort_values("run_id", key=lambda s: s.map(order), kind="stable", ignore_index=True)
+    store.replace_runs(frames)
     store.write("levels", pd.DataFrame(dict(depth=range(len(levels)), name=[lv.name for lv in levels],
                                             ordered=[lv.ordered for lv in levels])))
     return [run_id(r.path) for r in todo]

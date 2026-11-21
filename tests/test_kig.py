@@ -7,8 +7,8 @@ import pytest
 
 import toy
 from kig.aggregate import group_view
-from kig.core import Level, Run, register_explainer, register_view, summarize
-from kig.explainers import LightGBMExplainer, PrecomputedExplainer
+from kig.core import Level, Run, explainer_for, register_explainer, register_view, summarize
+from kig.explainers import CheckpointExplainer, LightGBMExplainer, LinearExplainer, OneStageExplainer, PrecomputedExplainer
 from kig.report import report_data
 from kig.store import SCHEMA, Store
 
@@ -21,7 +21,7 @@ class LinearModel:
     intercept: float
 
 
-class LinearExplainer:
+class ClosedFormExplainer:
     n_stages = 1
     stage_label = "Model"
 
@@ -43,7 +43,7 @@ class CoefView:
         return dict(coef=run.model.coef.tolist())
 
 
-register_explainer(LinearModel, LinearExplainer)
+register_explainer(LinearModel, ClosedFormExplainer)
 register_view(CoefView())
 
 LINEAR_FEATURES = ["a", "b", "c"]
@@ -55,8 +55,10 @@ def linear():
     rng = np.random.default_rng(1)
     X = rng.normal(size=(300, 3))
     y = X @ np.array([1.0, -0.5, 0.0]) + rng.normal(size=300)
-    runs = [Run(("fold=1",), LinearModel(np.array([0.9, -0.4, 0.3]), 0.1), dict(train=np.arange(0, 150), valid=np.arange(150, 300))),
-            Run(("fold=2",), LinearModel(np.array([1.1, -0.6, -0.2]), -0.1), dict(train=np.arange(140, 300), valid=np.arange(0, 150)))]
+    runs = [Run(("fold=1",), LinearModel(np.array([0.9, -0.4, 0.3]), 0.1),
+                dict(train=np.arange(0, 150), valid=np.arange(150, 300))),
+            Run(("fold=2",), LinearModel(np.array([1.1, -0.6, -0.2]), -0.1),
+                dict(train=np.arange(140, 300), valid=np.arange(0, 150)))]
     return X, y, runs
 
 
@@ -103,6 +105,15 @@ def test_loss_reductions_of_each_stage_add_up_to_the_loss_change(toy_p09):
     before = np.concatenate([[toy.mse_loss(y[runs[0].sets["valid"]], 0.0).sum()], stage_loss.loss_sum.to_numpy()[:-1]])
     change = stage_loss.loss_sum.to_numpy() - before
     assert np.abs(gain.to_numpy() + stage_loss.base_gain_sum.to_numpy() + change).max() < TOL
+
+
+def test_one_booster_in_more_than_one_run_gives_the_same_sums_with_parallel_runs(toy_p09, tmp_path):
+    X, y, runs, _ = toy_p09
+    shared = [Run((f"wf=p{i:02d}",), runs[0].model, dict(valid=np.arange(i * 500, (i + 1) * 500))) for i in range(8)]
+    stores = [Store(tmp_path / str(n_jobs)) for n_jobs in (1, 4)]
+    for store, n_jobs in zip(stores, (1, 4)):
+        summarize(shared, X, y, store, levels=toy.LEVELS, features=toy.FEATURES, loss=toy.mse_loss, n_jobs=n_jobs)
+    pd.testing.assert_frame_equal(stores[0].read("summary"), stores[1].read("summary"))
 
 
 def test_toy_regime_is_positive_in_the_nested_folds_and_negative_on_forward_validation(toy_p09):
@@ -189,8 +200,8 @@ def test_cross_evaluation_adds_the_validation_rows_of_the_sibling_runs(linear, t
 def test_precomputed_attributions_give_the_sums_of_the_model(linear, tmp_path):
     X, y, runs = linear
     store, _ = linear_store(linear, tmp_path / "1")
-    pre = [Run(r.path, None, r.sets, explainer=PrecomputedExplainer(np.column_stack([X * r.model.coef, np.full(300, r.model.intercept)])))
-           for r in runs]
+    pre = [Run(r.path, None, r.sets, explainer=PrecomputedExplainer(
+        np.column_stack([X * r.model.coef, np.full(300, r.model.intercept)]))) for r in runs]
     other = Store(tmp_path / "2")
     summarize(pre, X, y, other, levels=LINEAR_LEVELS, features=LINEAR_FEATURES, loss=toy.mse_loss)
     pd.testing.assert_frame_equal(other.read("summary"), store.read("summary"))
@@ -203,3 +214,115 @@ def test_group_view_refuses_a_mix_of_staged_and_one_stage_runs(linear, tmp_path)
     summarize([*runs, staged], X, y, store, levels=LINEAR_LEVELS, features=LINEAR_FEATURES, loss=toy.mse_loss)
     with pytest.raises(ValueError):
         group_view(store)
+
+
+def lightgbm_wrapper(X, y):
+    model = pytest.importorskip("lightgbm").LGBMRegressor(n_estimators=20, verbose=-1).fit(X, y)
+    return (model, lambda rows: model.predict(rows, raw_score=True),
+            lambda rows, k: model.booster_.predict(rows, pred_contrib=True, num_iteration=k), 1e-9)
+
+
+def xgboost_booster(X, y):
+    xgb = pytest.importorskip("xgboost")
+    model = xgb.train(dict(max_depth=3), xgb.DMatrix(X, y), num_boost_round=20)
+    return (model, lambda rows: model.predict(xgb.DMatrix(rows), output_margin=True),
+            lambda rows, k: model.predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)), 1e-4)
+
+
+def xgboost_wrapper(X, y):
+    xgb = pytest.importorskip("xgboost")
+    model = xgb.XGBClassifier(n_estimators=20, max_depth=3).fit(X, y > 0)
+    return (model, lambda rows: model.predict(rows, output_margin=True),
+            lambda rows, k: model.get_booster().predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)), 1e-4)
+
+
+def catboost_model(X, y):
+    catboost = pytest.importorskip("catboost")
+    model = catboost.CatBoostRegressor(iterations=20, depth=3, verbose=0, allow_writing_files=False).fit(X, y)
+
+    def truncated(rows, k):
+        first = model.copy()
+        first.shrink(ntree_end=k)
+        return first.get_feature_importance(type="ShapValues", data=catboost.Pool(rows))
+    return model, lambda rows: model.predict(rows, prediction_type="RawFormulaVal"), truncated, 1e-9
+
+
+def sklearn_model(module, name, **params):
+    def family(X, y):
+        cls = getattr(pytest.importorskip(f"sklearn.{module}"), name)
+        if module == "ensemble":
+            pytest.importorskip("shap")
+        if name.endswith("Classifier") or name == "LogisticRegression":
+            model = cls(**params).fit(X, y > 0)
+            return model, model.decision_function, None, 1e-9
+        model = cls(**params).fit(X, y)
+        return model, model.predict, None, 1e-9
+    return pytest.param(family, id=name)
+
+
+FAMILIES = [
+    lightgbm_wrapper, xgboost_booster, xgboost_wrapper, catboost_model,
+    sklearn_model("linear_model", "Ridge"), sklearn_model("linear_model", "LogisticRegression"),
+    sklearn_model("linear_model", "SGDRegressor"),
+    sklearn_model("ensemble", "RandomForestRegressor", n_estimators=10, min_samples_leaf=5),
+    sklearn_model("ensemble", "ExtraTreesRegressor", n_estimators=10, min_samples_leaf=5),
+    sklearn_model("ensemble", "GradientBoostingRegressor", n_estimators=20),
+    sklearn_model("ensemble", "GradientBoostingClassifier", n_estimators=20),
+    sklearn_model("ensemble", "HistGradientBoostingRegressor", max_iter=20),
+    sklearn_model("ensemble", "HistGradientBoostingClassifier", max_iter=20),
+]
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_slices_of_each_model_family_add_up_to_the_raw_score(family):
+    X, y, _ = toy.make_data(seed=0)
+    X, y = X[:1000], y[:1000]
+    model, raw, truncated, tol = family(X, y)
+    explainer = explainer_for(Run(("m",), model, {}))
+    assert np.abs(sum(explainer.slices(X)).sum(1) - raw(X)).max() < tol
+    if truncated:
+        first = sum(s for _, s in zip(range(5), explainer.slices(X)))
+        assert explainer.n_stages == 20
+        assert np.abs(first - truncated(X, 5)).max() < tol
+
+
+MULTICLASS = [
+    ("lightgbm", lambda lib: lib.LGBMClassifier(n_estimators=2, verbose=-1)),
+    ("xgboost", lambda lib: lib.XGBClassifier(n_estimators=2)),
+    ("catboost", lambda lib: lib.CatBoostClassifier(iterations=2, verbose=0, allow_writing_files=False)),
+    ("sklearn.linear_model", lambda lib: lib.LogisticRegression()),
+    ("sklearn.ensemble", lambda lib: lib.HistGradientBoostingClassifier(max_iter=2)),
+]
+
+
+@pytest.mark.parametrize("library, make", MULTICLASS, ids=[library for library, _ in MULTICLASS])
+def test_each_model_family_refuses_a_multiclass_model(library, make):
+    X, y, _ = toy.make_data(seed=0)
+    model = make(pytest.importorskip(library)).fit(X[:300], np.digitize(y[:300], [-1.0, 1.0]))
+    with pytest.raises(TypeError):
+        explainer_for(Run(("m",), model, {}))
+
+
+def test_checkpoint_slices_add_up_to_the_last_checkpoint(linear):
+    X, _, runs = linear
+    checkpoints = [ClosedFormExplainer(run.model) for run in runs]
+    explainer = CheckpointExplainer(checkpoints)
+    assert explainer.n_stages == 2
+    assert np.abs(sum(explainer.slices(X)) - next(checkpoints[-1].slices(X))).max() < TOL
+
+
+def test_linear_reference_moves_the_base_term_and_keeps_the_raw_score(linear):
+    X, _, _ = linear
+    model = pytest.importorskip("sklearn.linear_model").Ridge().fit(X, X @ np.array([1.0, -0.5, 0.0]) + 2.0)
+    (zero,), (shifted,) = LinearExplainer(model).slices(X), LinearExplainer(model, reference=np.ones(3)).slices(X)
+    assert np.abs(zero.sum(1) - shifted.sum(1)).max() < TOL
+    assert shifted[0, -1] == pytest.approx(model.intercept_ + model.coef_.sum())
+
+
+def test_one_stage_form_of_a_staged_run_goes_in_a_group_view_with_one_stage_runs(linear, tmp_path):
+    X, y, runs = linear
+    staged = PrecomputedExplainer(np.ones((2, 300, 4)))
+    store = Store(tmp_path)
+    summarize([*runs, Run(("fold=3",), None, runs[0].sets, explainer=OneStageExplainer(staged))], X, y, store,
+              levels=LINEAR_LEVELS, features=LINEAR_FEATURES, loss=toy.mse_loss)
+    assert set(group_view(store).child.dropna()) == {"fold=1", "fold=2", "fold=3"}
