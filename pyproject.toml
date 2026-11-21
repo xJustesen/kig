@@ -1,0 +1,29 @@
+[project]
+name = "kig"
+version = "0.1.0"
+description = "Diagnostic tool for fitted models: which features help or hurt, at which stage, in which split."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy", "pandas", "pyarrow"]
+
+[project.optional-dependencies]
+lightgbm = ["lightgbm"]
+xgboost = ["xgboost"]
+catboost = ["catboost"]
+sklearn = ["scikit-learn"]
+shap = ["shap"]
+all = ["lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
+
+[dependency-groups]
+dev = ["pytest", "ruff", "lightgbm", "xgboost", "catboost", "scikit-learn", "shap"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
