@@ -31,13 +31,29 @@ def _log_loss_grad(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
     return np.exp(-np.logaddexp(0.0, -raw)) - y
 
 
+def _softmax_loss(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return the softmax cross-entropy (np.ndarray) of each row for class indices and scores (rows, classes)."""
+    return np.logaddexp.reduce(raw, axis=1) - raw[np.arange(len(y)), y]
+
+
+def _softmax_loss_grad(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Return the gradient (np.ndarray) of the softmax cross-entropy in the score of each class."""
+    grad = np.exp(raw - np.logaddexp.reduce(raw, axis=1, keepdims=True))
+    grad[np.arange(len(y)), y] -= 1.0
+    return grad
+
+
 _SQUARED_ERROR = (_squared_error, _squared_error_grad)
 _LOG_LOSS = (_log_loss, _log_loss_grad)
+_SOFTMAX_LOSS = (_softmax_loss, _softmax_loss_grad)
 _OBJECTIVES = {
     "regression": _SQUARED_ERROR,
     "binary sigmoid:1": _LOG_LOSS,
+    "multiclass": _SOFTMAX_LOSS,
     "reg:squarederror": _SQUARED_ERROR,
     "binary:logistic": _LOG_LOSS,
+    "multi:softprob": _SOFTMAX_LOSS,
+    "multi:softmax": _SOFTMAX_LOSS,
     "RMSE": _SQUARED_ERROR,
     "Logloss": _LOG_LOSS,
     "squared_error": _SQUARED_ERROR,
@@ -60,13 +76,12 @@ class LightGBMExplainer:
     stage_label = "Boosting round"
 
     def __init__(self, model):
-        if model.num_model_per_iteration() > 1:
-            raise TypeError("multiclass models are not supported")
         dump = model.dump_model(num_iteration=1)
         if dump["average_output"]:
             raise TypeError("a booster that averages its trees (boosting='rf') has no additive stage axis")
         self.model = model
-        self.loss_and_grad = _OBJECTIVES.get(dump.get("objective"))
+        self.n_classes = model.num_model_per_iteration()
+        self.loss_and_grad = _OBJECTIVES.get(dump.get("objective", "").split(" num_class:")[0])
         self.n_stages = model.best_iteration if model.best_iteration > 0 else model.current_iteration()
 
     def slices(self, X) -> Iterator[np.ndarray]:
@@ -74,7 +89,7 @@ class LightGBMExplainer:
         for t in range(self.n_stages):
             with _LIGHTGBM_LOCK:
                 s = self.model.predict(X, pred_contrib=True, start_iteration=t, num_iteration=1)
-            yield s
+            yield s if self.n_classes == 1 else s.reshape(len(s), self.n_classes, -1)
 
 
 class XGBoostExplainer:
@@ -84,9 +99,10 @@ class XGBoostExplainer:
 
     def __init__(self, model, best_iteration: int | None = None, missing: float = np.nan):
         learner = json.loads(model.save_config())["learner"]
-        if max(int(learner["learner_model_param"][key]) for key in ("num_class", "num_target")) > 1:
-            raise TypeError("multiclass and multi-output models are not supported")
+        if int(learner["learner_model_param"]["num_target"]) > 1:
+            raise TypeError("multi-output models are not supported")
         self.model = model
+        self.n_scores = max(int(learner["learner_model_param"]["num_class"]), 1)
         self.missing = missing
         self.loss_and_grad = _OBJECTIVES.get(learner["objective"]["name"])
         if learner["gradient_booster"]["name"] == "gblinear":
@@ -107,7 +123,7 @@ class XGBoostExplainer:
         yield self.model.predict(data, pred_contribs=True, iteration_range=(0, 1))
         # XGBoost adds the base score of the model to the base term of each call. A zero margin removes it
         # after the first round.
-        data.set_base_margin(np.zeros(len(X)))
+        data.set_base_margin(np.zeros((len(X), self.n_scores)))
         for t in range(1, self.n_stages):
             # XGBoost refuses a contribution range that does not start at round 0, so each later round is a
             # slice of the model.

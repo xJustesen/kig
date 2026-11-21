@@ -89,8 +89,9 @@ build_report(store, "report.html")  # one static HTML file, no server
   DataFrame. For a DataFrame, `features` defaults to its column names and the model gets the rows
   with their dtypes, for example categorical columns. `y` can be an array or a pandas Series.
 - `loss` is optional for the supported models. With no `loss`, kig uses the loss and the analytic
-  gradient of the model objective: squared error, or binary log loss for the labels 0 and 1. All
-  runs must have the same loss. For another objective, for example a custom objective, give `loss`.
+  gradient of the model objective: squared error, binary log loss for the labels 0 and 1, or
+  softmax cross-entropy for the integer class indices 0, 1, 2, and so on. All runs must have the
+  same loss. For another objective, for example a custom objective, give `loss`.
 - The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
   sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
@@ -138,15 +139,20 @@ of features with a negative gain, and `kig/min_valid_gain` is the lowest gain of
 
 | Library | Models | Extra | Stages |
 |---|---|---|---|
-| **LightGBM** | `Booster`, `LGBMRegressor`, binary `LGBMClassifier`, `LGBMRanker` | `lightgbm` | one for each boosting round |
-| **XGBoost** | `Booster`, `XGBRegressor`, binary `XGBClassifier`, `XGBRanker` | `xgboost` | one for each boosting round |
+| **LightGBM** | `Booster`, `LGBMRegressor`, `LGBMClassifier`, `LGBMRanker` | `lightgbm` | one for each boosting round |
+| **XGBoost** | `Booster`, `XGBRegressor`, `XGBClassifier`, `XGBRanker` | `xgboost` | one for each boosting round |
 | **CatBoost** | `CatBoostRegressor`, binary `CatBoostClassifier` | `catboost` | one for each boosting round |
 | **scikit-learn, linear** | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet`, `SGDRegressor`, binary `LogisticRegression` and the other models with the same base classes | `sklearn` | one, closed form |
 | **scikit-learn, trees** | `RandomForestRegressor`, `ExtraTreesRegressor`, `GradientBoostingRegressor`, `HistGradientBoostingRegressor` and the binary classifiers of the two boosters | `sklearn`, `shap` | one, from `shap.TreeExplainer` |
 | **scikit-learn, pipeline** | `Pipeline` with one of the models above as its last step | `sklearn` | those of the last step |
 
 All attributions are in the raw score space: the margin or the logit, not a probability. Your loss
-function must take the raw score. Multiclass and multi-output models are refused.
+function must take the raw score.
+
+A multiclass model of LightGBM or XGBoost has one raw score for each class. Its loss takes the
+scores as an array of shape (rows, classes), and its gradient gives one value for each class. The
+gain and the mean |SHAP| of a feature are sums over the classes: the report has no view for each
+class. The other multiclass models and all multi-output models are refused.
 
 <details><summary>Notes for each library</summary>
 

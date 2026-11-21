@@ -9,6 +9,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from importlib.metadata import version
+from itertools import chain
 from typing import Any, Callable, Iterator, Protocol
 
 import numpy as np
@@ -46,7 +47,7 @@ class Explainer(Protocol):
     stage_label: str
 
     def slices(self, X) -> Iterator[np.ndarray]:
-        """Yield one array (rows, features + 1) for each stage; the last column is the base term."""
+        """Yield for each stage one array (rows[, classes], features + 1); the last column is the base term."""
 
 
 class ModelView(Protocol):
@@ -160,42 +161,54 @@ def _inferred_loss(runs: list[Run]) -> tuple[Callable, Callable]:
 
 def _numeric_grad(loss) -> Callable:
     h = 1e-6
-    return lambda y, raw: (loss(y, raw + h) - loss(y, raw - h)) / (2 * h)
+
+    def grad(y, raw):
+        moves = [h] if raw.ndim == 1 else h * np.eye(raw.shape[1])
+        slopes = [(loss(y, raw + move) - loss(y, raw - move)) / (2 * h) for move in moves]
+        return np.stack(slopes, -1).reshape(raw.shape)
+
+    return grad
 
 
 def _start_at_base(s: np.ndarray, n_feat: int) -> tuple[np.ndarray, np.ndarray]:
     """Return the start score and the slice of a one-stage model: the base term starts the split and gets no gain."""
-    return s[:, n_feat], np.column_stack([s[:, :n_feat], np.zeros(len(s))])
+    return s[..., n_feat], np.concatenate([s[..., :n_feat], np.zeros_like(s[..., :1])], -1)
 
 
 def _reduce(explainer: Explainer, rows, y, w, loss, grad, n_feat: int) -> dict[str, np.ndarray]:
-    """Read the slices in stage order; keep sums only, so memory stays at rows x features."""
+    """Read the slices in stage order; keep sums only, so memory stays at the size of one slice."""
     n_stages = explainer.n_stages
     abs_sum = np.empty((n_stages, n_feat))
     gain_sum = np.empty((n_stages, n_feat))
     loss_sum = np.empty(n_stages)
     base_gain_sum = np.empty(n_stages)
-    a = np.zeros(len(y))
-    cum = np.zeros((len(y), n_feat))
     slices = (np.asarray(s, dtype=float) for s in explainer.slices(rows))
+    first = next(slices)
+    a = np.zeros(first.shape[:-1])
+    cum = np.zeros((*first.shape[:-1], n_feat))
     if n_stages == 1:
-        a, only = _start_at_base(next(slices), n_feat)
-        slices = [only]
-    for t, s in zip(range(n_stages), slices, strict=True):
-        phi, base = s[:, :n_feat], s[:, n_feat]
-        step = phi.sum(1) + base
-        b = a + step
-        flat = b == a
-        mean_grad = (loss(y, b) - loss(y, a)) / np.where(flat, 1.0, step)
-        if flat.any():
-            mean_grad = np.where(flat, grad(y, a), mean_grad)
-        wg = w * mean_grad
-        gain_sum[t] = -(phi * wg[:, None]).sum(0)
+        a, first = _start_at_base(first, n_feat)
+        slices = ()
+    moves = [...] if a.ndim == 1 else [np.s_[:, c] for c in range(a.shape[1])]
+    for t, s in zip(range(n_stages), chain([first], slices), strict=True):
+        phi, base = s[..., :n_feat], s[..., n_feat]
+        step = phi.sum(-1) + base
+        wg = np.empty_like(step)
+        # One class moves at a time, so the loss changes of the moves add up to the loss change of the stage.
+        for move in moves:
+            b = a.copy()
+            b[move] += step[move]
+            flat = b[move] == a[move]
+            mean_grad = (loss(y, b) - loss(y, a)) / np.where(flat, 1.0, step[move])
+            if flat.any():
+                mean_grad = np.where(flat, grad(y, a)[move], mean_grad)
+            wg[move] = w * mean_grad
+            a = b
+        gain_sum[t] = -(phi * wg[..., None]).reshape(-1, n_feat).sum(0)
         base_gain_sum[t] = -(base * wg).sum()
         cum += phi
-        abs_sum[t] = (np.abs(cum) * w[:, None]).sum(0)
-        loss_sum[t] = (w * loss(y, b)).sum()
-        a = b
+        abs_sum[t] = (np.abs(cum).reshape(len(y), -1, n_feat).sum(1) * w[:, None]).sum(0)
+        loss_sum[t] = (w * loss(y, a)).sum()
     return dict(abs_sum=abs_sum, gain_sum=gain_sum, loss_sum=loss_sum, base_gain_sum=base_gain_sum)
 
 

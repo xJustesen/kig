@@ -462,8 +462,6 @@ def test_pipeline_refuses_feature_names_that_are_not_its_transformed_columns(mix
 
 
 MULTICLASS = [
-    ("lightgbm", lambda lib: lib.LGBMClassifier(n_estimators=2, verbose=-1)),
-    ("xgboost", lambda lib: lib.XGBClassifier(n_estimators=2)),
     ("catboost", lambda lib: lib.CatBoostClassifier(iterations=2, verbose=0, allow_writing_files=False)),
     ("sklearn.linear_model", lambda lib: lib.LogisticRegression()),
     ("sklearn.ensemble", lambda lib: lib.HistGradientBoostingClassifier(max_iter=2)),
@@ -476,6 +474,51 @@ def test_each_model_family_refuses_a_multiclass_model(library, make):
     model = make(pytest.importorskip(library)).fit(X[:300], np.digitize(y[:300], [-1.0, 1.0]))
     with pytest.raises(TypeError):
         explainer_for(Run(("m",), model, {}))
+
+
+MULTICLASS_BOOSTERS = [
+    ("lightgbm", lambda lib: lib.LGBMClassifier(n_estimators=5, verbose=-1), {"raw_score": True}),
+    ("xgboost", lambda lib: lib.XGBClassifier(n_estimators=5, max_depth=3), {"output_margin": True}),
+]
+
+
+@pytest.mark.parametrize("library, make, raw", MULTICLASS_BOOSTERS, ids=[row[0] for row in MULTICLASS_BOOSTERS])
+def test_multiclass_booster_gives_the_raw_score_of_each_class_and_a_report(library, make, raw, tmp_path):
+    X, y, _ = toy.make_data(seed=0)
+    X, label = X[:600], np.digitize(y[:600], [-1.0, 1.0])
+    model = make(pytest.importorskip(library)).fit(X, label)
+    run = Run(("m",), model, {"valid": np.arange(600)})
+    assert np.abs(sum(explainer_for(run).slices(X)).sum(-1) - model.predict(X, **raw)).max() < 1e-4
+    store = Store(tmp_path)
+    summarize([run], X, label, store, levels=LINEAR_LEVELS, features=toy.FEATURES, max_rows=None)
+    loss = store.read("stage_loss").loss_sum.to_numpy()
+    gain = store.read("summary").groupby("stage").gain_sum.sum() + store.read("stage_loss").base_gain_sum.to_numpy()
+    assert loss[-1] == pytest.approx(-np.log(model.predict_proba(X)[np.arange(600), label]).sum(), rel=1e-4)
+    assert np.abs(gain + loss - np.concatenate([[600 * np.log(3)], loss[:-1]])).max() < TOL
+    assert report_data(store)["runs"]["m"]["n_stages"] == 5
+
+
+class CancellingExplainer:
+    n_stages = 1
+    stage_label = "Model"
+
+    def slices(self, X):
+        first = np.column_stack([X[:, 0], -X[:, 0], np.zeros(len(X))])
+        yield np.stack([first, np.zeros_like(first), np.zeros_like(first)], 1)
+
+
+def softmax_loss(y, raw):
+    return np.logaddexp.reduce(raw, axis=1) - raw[np.arange(len(y)), y]
+
+
+def test_numeric_gradient_is_for_each_class_when_the_attributions_of_a_class_cancel(linear, tmp_path):
+    X, y, _ = linear
+    label = np.digitize(y, [-1.0, 1.0])
+    run = Run(("m",), None, {"valid": np.arange(300)}, explainer=CancellingExplainer())
+    store = Store(tmp_path)
+    summarize([run], X, label, store, levels=LINEAR_LEVELS, features=["a", "b"], loss=softmax_loss)
+    gain = store.read("summary").set_index("feature").gain_sum
+    assert gain["a"] == pytest.approx(-(X[:, 0] * (1 / 3 - (label == 0))).sum())
 
 
 def test_checkpoint_slices_add_up_to_the_last_checkpoint(linear):
