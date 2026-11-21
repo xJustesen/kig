@@ -352,6 +352,63 @@ def test_slices_of_each_model_family_add_up_to_the_raw_score(family):
         assert np.abs(first - truncated(X, 5)).max() < tol
 
 
+def lightgbm_classifier(X, y):
+    model = pytest.importorskip("lightgbm").LGBMClassifier(n_estimators=20, verbose=-1).fit(X, y > 0)
+    return model, lambda rows: model.predict(rows, raw_score=True), None, 1e-9
+
+
+def catboost_classifier(X, y):
+    catboost = pytest.importorskip("catboost")
+    model = catboost.CatBoostClassifier(iterations=20, depth=3, verbose=0, allow_writing_files=False).fit(X, y > 0)
+    return model, lambda rows: model.predict(rows, prediction_type="RawFormulaVal"), None, 1e-9
+
+
+@pytest.mark.parametrize("family", [*FAMILIES, lightgbm_classifier, catboost_classifier])
+def test_summary_pass_with_no_loss_uses_the_loss_and_the_gradient_of_the_model_objective(family, tmp_path):
+    X, y, _ = toy.make_data(seed=0)
+    X, y = X[:1000], y[:1000]
+    model, raw, _, _ = family(X, y)
+    binary = len(getattr(model, "classes_", ())) == 2
+    label, score = (y > 0 if binary else y), raw(X).astype(float)
+    direct = np.logaddexp(0.0, score) - label * score if binary else toy.mse_loss(y, score)
+    run = Run(("m",), model, {"valid": np.arange(1000)})
+    store = Store(tmp_path)
+    summarize([run], X, label, store, levels=LINEAR_LEVELS, features=toy.FEATURES, max_rows=None)
+    assert store.read("stage_loss").loss_sum.iloc[-1] == pytest.approx(direct.sum(), rel=1e-4)
+    loss, grad = explainer_for(run).loss_and_grad
+    slope = (loss(label, score + 1e-6) - loss(label, score - 1e-6)) / 2e-6
+    assert np.abs(grad(label, score) - slope).max() < 1e-4
+
+
+def custom_objective(label, score):
+    return score - label, np.ones_like(label)
+
+
+CUSTOM = [
+    ("lightgbm", lambda lib: lib.LGBMRegressor(n_estimators=2, verbose=-1, objective=custom_objective)),
+    ("xgboost", lambda lib: lib.XGBRegressor(n_estimators=2, objective=custom_objective)),
+]
+
+
+@pytest.mark.parametrize("library, make", CUSTOM, ids=[library for library, _ in CUSTOM])
+def test_summary_pass_with_no_loss_refuses_a_custom_objective(library, make, tmp_path):
+    X, y, _ = toy.make_data(seed=0)
+    run = Run(("m",), make(pytest.importorskip(library)).fit(X[:300], y[:300]), {"valid": np.arange(300)})
+    with pytest.raises(ValueError, match="give `loss`"):
+        summarize([run], X, y, Store(tmp_path), levels=LINEAR_LEVELS, features=toy.FEATURES)
+
+
+def test_summary_pass_with_no_loss_refuses_runs_with_different_losses(linear, tmp_path):
+    X, y, _ = linear
+    lm = pytest.importorskip("sklearn.linear_model")
+    runs = [
+        Run(("fold=1",), lm.Ridge().fit(X, y), {"valid": np.arange(300)}),
+        Run(("fold=2",), lm.LogisticRegression().fit(X, y > 0), {"valid": np.arange(300)}),
+    ]
+    with pytest.raises(ValueError, match="one loss"):
+        summarize(runs, X, y, Store(tmp_path), levels=LINEAR_LEVELS, features=LINEAR_FEATURES)
+
+
 MULTICLASS = [
     ("lightgbm", lambda lib: lib.LGBMClassifier(n_estimators=2, verbose=-1)),
     ("xgboost", lambda lib: lib.XGBClassifier(n_estimators=2)),

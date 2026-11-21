@@ -147,6 +147,17 @@ def _with_sibling_sets(runs: list[Run]) -> list[Run]:
     return out
 
 
+def _inferred_loss(runs: list[Run]) -> tuple[Callable, Callable]:
+    """Return the loss and its gradient (tuple[Callable, Callable]) of the model objective that all runs share."""
+    found = {run_id(r.path): getattr(explainer_for(r), "loss_and_grad", None) for r in runs}
+    unknown = [rid for rid, pair in found.items() if pair is None]
+    if unknown:
+        raise ValueError(f"no loss is known for the model objective of the runs {unknown}: give `loss`")
+    if len(set(found.values())) != 1:
+        raise ValueError("the runs must have one loss for all their model objectives: give `loss`")
+    return next(iter(found.values()))
+
+
 def _numeric_grad(loss) -> Callable:
     h = 1e-6
     return lambda y, raw: (loss(y, raw + h) - loss(y, raw - h)) / (2 * h)
@@ -255,7 +266,7 @@ def summarize(
     *,
     levels: list[Level],
     features: list[str] | None = None,
-    loss: Callable,
+    loss: Callable | None = None,
     grad: Callable | None = None,
     weights=None,
     max_rows: int | None = 5000,
@@ -277,6 +288,8 @@ def summarize(
     y = np.asarray(y)
     if features is None:
         features = [str(name) for name in X.columns]
+    if loss is None:
+        loss, grad = _inferred_loss(runs)
     if cross_eval:
         runs = _with_sibling_sets(runs)
     keys = {run_id(r.path): _cache_key(r, loss, grad, weights, max_rows, seed, features) for r in runs}

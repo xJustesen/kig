@@ -16,8 +16,8 @@
 
 
 kig shows which features help or hurt a fitted model, at which stage of the fit, and in which
-split. It never fits a model and never makes a split: you give it fitted models, row indices and a
-loss function. Give it development data only.
+split. It never fits a model and never makes a split: you give it fitted models and row indices.
+Give it development data only.
 
 ## ✨ Features
 
@@ -76,6 +76,9 @@ build_report(store, "report.html")  # one static HTML file, no server
 - `X` must take a NumPy index array for its rows, for example a NumPy array, or be a pandas
   DataFrame. For a DataFrame, `features` defaults to its column names and the model gets the rows
   with their dtypes, for example categorical columns. `y` can be an array or a pandas Series.
+- `loss` is optional for the supported models. With no `loss`, kig uses the loss and the analytic
+  gradient of the model objective: squared error, or binary log loss for the labels 0 and 1. All
+  runs must have the same loss. For another objective, for example a custom objective, give `loss`.
 - The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
   sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
@@ -93,6 +96,8 @@ build_report(store, "report.html")  # one static HTML file, no server
 - The cache key holds the model, the row indices, the row sample, the loss function and the
   package version. It does not hold `X` or `y`: use a new store directory when the data changes
   and the model does not.
+- A loss from the model objective and a loss that you give do not share the cache, also when they
+  are equal.
 - The model must be picklable.
 
 </details>
@@ -118,7 +123,8 @@ function must take the raw score. Multiclass and multi-output models are refused
   with `boosting='rf'` has no additive stage axis, so the explainer refuses it.
 - **XGBoost**: XGBoost computes in float32, so its sums agree with its own prediction to
   approximately 1e-5, not 1e-9. A wrapper with early stopping uses the rounds up to its best
-  iteration. A `gblinear` booster has one stage.
+  iteration. A `gblinear` booster has one stage. A booster from `xgboost.train` with a custom
+  `obj` reports the default objective: give `loss` for it.
 - **CatBoost**: symmetric trees only, which is the default grow policy.
 - **scikit-learn, linear**: the attribution of a feature is `coef * (x - reference)`. The default
   reference is zero, which is correct for centred features. For other features, give
@@ -156,7 +162,8 @@ such a run, wrap all its staged runs.
 
 - **Explainer** (`kig.core.Explainer`): give `n_stages`, `stage_label` and `slices(X)`. Register
   it with `register_explainer(ModelClass, factory)`, or give it to a run with
-  `Run(..., explainer=...)`.
+  `Run(..., explainer=...)`. To let `summarize` work with no `loss`, also give `loss_and_grad`: the
+  pair of the loss function and its gradient for the model objective.
 - **Model view** (`kig.core.ModelView`): give `name`, `applies_to`, `collect` and `js`. `js` is one
   module that exports `render(container, payload, api)`. Register it with `register_view(view)`
   before `summarize` and `build_report`. The report shows it as one tab.
