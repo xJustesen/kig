@@ -1,0 +1,18 @@
+[project]
+name = "kig"
+version = "0.1.0"
+description = "Diagnostic tool for fitted models: which features help or hurt, at which stage, in which split."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy", "pandas", "pyarrow"]
+
+[dependency-groups]
+dev = ["pytest", "lightgbm"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
