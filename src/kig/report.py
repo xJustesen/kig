@@ -92,12 +92,23 @@ def report_data(store: Store) -> dict:
     )
 
 
+class Report(type(Path())):
+    """Path of a built report; a notebook shows the report inline in an `iframe`."""
+
+    def _repr_html_(self) -> str | None:
+        """Return the `iframe` markup (str) of the report, or None for a path that is not a file."""
+        if not self.is_file():
+            return None
+        page = html.escape(self.read_text(encoding="utf-8"))
+        return f'<iframe srcdoc="{page}" style="width:100%;height:640px;border:0"></iframe>'
+
+
 def _embed(value) -> str:
     return json.dumps(value, separators=(",", ":")).replace("<", "\\u003c")
 
 
-def build_report(store: Store, out: str | Path, title: str = "kig report") -> Path:
-    """Write the report as one static HTML file with all data, styles and scripts inside; return its path (Path)."""
+def build_report(store: Store, out: str | Path, title: str = "kig report") -> Report:
+    """Write the report as one static HTML file with all data, styles and scripts inside; return its path (Report)."""
     static = files("kig").joinpath("static")
     text = {
         name: static.joinpath(name).read_text(encoding="utf-8")
@@ -114,6 +125,6 @@ def build_report(store: Store, out: str | Path, title: str = "kig report") -> Pa
         views=views,
         app=text["app.js"],
     )
-    out = Path(out)
+    out = Report(out)
     out.write_text(page, encoding="utf-8")
     return out

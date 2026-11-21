@@ -17,7 +17,7 @@ from kig.explainers import (
     OneStageExplainer,
     PrecomputedExplainer,
 )
-from kig.report import report_data
+from kig.report import Report, build_report, report_data
 from kig.store import SCHEMA, Store
 
 TOL = 1e-9
@@ -174,6 +174,17 @@ def test_payload_of_a_model_view_is_in_the_report_data_of_the_runs_it_applies_to
     views = report_data(store)["runs"]["fold=2"]["views"]
     assert views == [dict(name="Summary", payload={}), dict(name="Coefficients", payload=dict(coef=[1.1, -0.6, -0.2]))]
     assert [v["name"] for v in report_data(toy_p09[3])["runs"]["wf=p09"]["views"]] == ["Stages", "Summary"]
+
+
+def test_built_report_is_a_path_that_a_notebook_shows_in_an_iframe(linear, tmp_path):
+    store, _ = linear_store(linear, tmp_path / "store")
+    report = build_report(store, tmp_path / "report.html")
+    assert report == tmp_path / "report.html"
+    assert report._repr_html_().startswith('<iframe srcdoc="&lt;!doctype html&gt;')
+
+
+def test_path_that_is_not_a_file_has_no_html_form(tmp_path):
+    assert Report(tmp_path)._repr_html_() is None
 
 
 def test_overlap_counts_the_rows_in_both_the_train_set_and_the_validation_set(linear, tmp_path):

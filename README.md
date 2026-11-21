@@ -94,6 +94,8 @@ build_report(store, "report.html")  # one static HTML file, no server
   same loss. For another objective, for example a custom objective, give `loss`.
 - The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
   sets are permitted.
+- `build_report` returns the path of the file. In a Jupyter notebook, a cell that ends with
+  `build_report(store, "report.html")` shows the report in the cell output.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
 - The store is a public interface: other tools can read its Parquet files. The
   [store schema](docs/store-schema.md) gives each table and column.
