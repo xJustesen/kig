@@ -125,6 +125,7 @@ build_report(store, "report.html")  # one static HTML file, no server
 | **CatBoost** | `CatBoostRegressor`, binary `CatBoostClassifier` | `catboost` | one for each boosting round |
 | **scikit-learn, linear** | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet`, `SGDRegressor`, binary `LogisticRegression` and the other models with the same base classes | `sklearn` | one, closed form |
 | **scikit-learn, trees** | `RandomForestRegressor`, `ExtraTreesRegressor`, `GradientBoostingRegressor`, `HistGradientBoostingRegressor` and the binary classifiers of the two boosters | `sklearn`, `shap` | one, from `shap.TreeExplainer` |
+| **scikit-learn, pipeline** | `Pipeline` with one of the models above as its last step | `sklearn` | those of the last step |
 
 All attributions are in the raw score space: the margin or the logit, not a probability. Your loss
 function must take the raw score. Multiclass and multi-output models are refused.
@@ -142,8 +143,10 @@ function must take the raw score. Multiclass and multi-output models are refused
   reference is zero, which is correct for centred features. For other features, give
   `explainer=LinearExplainer(model, reference=X[idx_train].mean(0))`.
 - **scikit-learn, trees**: the forest classifiers have no raw score, so they are not supported.
-- A scikit-learn `Pipeline` has no explainer: the attributions must be for the columns of the
-  shared `X`.
+- **scikit-learn, pipeline**: the attributions are those of the last step, for the columns that
+  the other steps give. When these are not the columns of `X`, give their names as `features`:
+  `features=list(pipeline[:-1].get_feature_names_out())`. All runs of one report must have the same
+  transformed columns.
 
 </details>
 
@@ -175,7 +178,8 @@ such a run, wrap all its staged runs.
 - **Explainer** (`kig.core.Explainer`): give `n_stages`, `stage_label` and `slices(X)`. Register
   it with `register_explainer(ModelClass, factory)`, or give it to a run with
   `Run(..., explainer=...)`. To let `summarize` work with no `loss`, also give `loss_and_grad`: the
-  pair of the loss function and its gradient for the model objective.
+  pair of the loss function and its gradient for the model objective. If the attributions are not
+  for the columns of `X`, also give `features`: the names of their columns.
 - **Model view** (`kig.core.ModelView`): give `name`, `applies_to`, `collect` and `js`. `js` is one
   module that exports `render(container, payload, api)`. Register it with `register_view(view)`
   before `summarize` and `build_report`. The report shows it as one tab.
