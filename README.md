@@ -98,6 +98,22 @@ build_report(store, "report.html")  # one static HTML file, no server
 
 </details>
 
+## 📈 Experiment trackers
+
+**MLflow**, with the `mlflow` extra:
+
+```python
+import mlflow
+from kig.integrations.mlflow import load_store, log_kig
+
+with mlflow.start_run() as run:
+    log_kig(store)  # the store and report.html as artifacts, two summary metrics
+store = load_store(run.info.run_id)  # a local copy of the store of a tracked run
+```
+
+The metrics are for the validation set of the top node: `kig/negative_valid_features` is the number
+of features with a negative gain, and `kig/min_valid_gain` is the lowest gain of a feature.
+
 ## 🧩 Supported models
 
 `Run(path, model, sets)` works with no explainer for these models:
