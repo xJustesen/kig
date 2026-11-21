@@ -1,4 +1,5 @@
 """Core: runs, the registries and the summary pass. The core knows no model type."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +23,7 @@ VALID = "valid"
 @dataclass(frozen=True)
 class Level:
     """One depth of the split hierarchy: its name (str) and if its keys have an order (bool)."""
+
     name: str
     ordered: bool
 
@@ -29,6 +31,7 @@ class Level:
 @dataclass
 class Run:
     """One fitted model, its path (tuple[str, ...]) and its named row sets (dict[str, np.ndarray])."""
+
     path: tuple[str, ...]
     model: Any
     sets: dict[str, np.ndarray]
@@ -38,6 +41,7 @@ class Run:
 
 class Explainer(Protocol):
     """Adapter that gives the slices of one model; set `by_index = True` to receive row indices in place of rows."""
+
     n_stages: int
     stage_label: str
 
@@ -47,6 +51,7 @@ class Explainer(Protocol):
 
 class ModelView(Protocol):
     """Plug-in view of one run: a JSON-safe payload from `collect` and a JavaScript module in `js` (str)."""
+
     name: str
     js: str
 
@@ -95,9 +100,14 @@ def run_id(path: tuple[str, ...]) -> str:
 def _identity(fn: Callable | None) -> str:
     code = getattr(fn, "__code__", None)
     with np.printoptions(threshold=sys.maxsize):
-        return repr((getattr(fn, "__module__", ""), getattr(fn, "__qualname__", repr(fn)),
-                     code and (code.co_code, code.co_consts),
-                     [cell.cell_contents for cell in getattr(fn, "__closure__", None) or ()]))
+        return repr(
+            (
+                getattr(fn, "__module__", ""),
+                getattr(fn, "__qualname__", repr(fn)),
+                code and (code.co_code, code.co_consts),
+                [cell.cell_contents for cell in getattr(fn, "__closure__", None) or ()],
+            )
+        )
 
 
 def _cache_key(run: Run, loss, grad, weights, max_rows, seed, features) -> str:
@@ -107,8 +117,20 @@ def _cache_key(run: Run, loss, grad, weights, max_rows, seed, features) -> str:
         h.update(np.asarray(run.sets[name], dtype=np.int64).tobytes())
     if weights is not None:
         h.update(np.asarray(weights, dtype=np.float64).tobytes())
-    h.update(repr((max_rows, seed, _identity(loss), _identity(grad), list(features), run.note,
-                   [v.name for v in model_views()], version("kig"))).encode())
+    h.update(
+        repr(
+            (
+                max_rows,
+                seed,
+                _identity(loss),
+                _identity(grad),
+                list(features),
+                run.note,
+                [v.name for v in model_views()],
+                version("kig"),
+            )
+        ).encode()
+    )
     return h.hexdigest()
 
 
@@ -116,8 +138,11 @@ def _with_sibling_sets(runs: list[Run]) -> list[Run]:
     valid = {r.path: r.sets[VALID] for r in runs if VALID in r.sets}
     out = []
     for r in runs:
-        extra = {f"{VALID}@{p[-1]}": idx for p, idx in valid.items()
-                 if p and len(p) == len(r.path) and p[:-1] == r.path[:-1] and p != r.path}
+        extra = {
+            f"{VALID}@{p[-1]}": idx
+            for p, idx in valid.items()
+            if p and len(p) == len(r.path) and p[:-1] == r.path[:-1] and p != r.path
+        }
         out.append(replace(r, sets={**r.sets, **extra}))
     return out
 
@@ -168,9 +193,16 @@ def _summarize_run(run: Run, key: str, X, y, weights, features, loss, grad, max_
     explainer = explainer_for(run)
     n_stages, n_feat = explainer.n_stages, len(features)
     stage = np.arange(n_stages)
-    info = dict(run_id=rid, path=list(run.path), depth=len(run.path), note=run.note,
-                model_kind=type(run.model).__name__, n_stages=n_stages,
-                stage_label=explainer.stage_label, cache_key=key)
+    info = dict(
+        run_id=rid,
+        path=list(run.path),
+        depth=len(run.path),
+        note=run.note,
+        model_kind=type(run.model).__name__,
+        n_stages=n_stages,
+        stage_label=explainer.stage_label,
+        cache_key=key,
+    )
     sets, stage_loss, summary, sampled = [], [], [], {}
     for name, full in run.sets.items():
         idx = np.asarray(full)
@@ -182,22 +214,54 @@ def _summarize_run(run: Run, key: str, X, y, weights, features, loss, grad, max_
         sums = _reduce(explainer, rows, y[idx], w, loss, grad, n_feat)
         overlap = len(np.intersect1d(run.sets[TRAIN], full)) if TRAIN in run.sets else 0
         sets.append(dict(run_id=rid, set=name, n=float(w.sum()), overlap_with_train=overlap))
-        stage_loss.append(pd.DataFrame(dict(run_id=rid, set=name, stage=stage, loss_sum=sums["loss_sum"],
-                                            base_gain_sum=sums["base_gain_sum"])))
-        summary.append(pd.DataFrame(dict(run_id=rid, set=name, feature=np.tile(features, n_stages),
-                                         stage=np.repeat(stage, n_feat), abs_sum=sums["abs_sum"].ravel(),
-                                         gain_sum=sums["gain_sum"].ravel())))
+        stage_loss.append(
+            pd.DataFrame(
+                dict(run_id=rid, set=name, stage=stage, loss_sum=sums["loss_sum"], base_gain_sum=sums["base_gain_sum"])
+            )
+        )
+        summary.append(
+            pd.DataFrame(
+                dict(
+                    run_id=rid,
+                    set=name,
+                    feature=np.tile(features, n_stages),
+                    stage=np.repeat(stage, n_feat),
+                    abs_sum=sums["abs_sum"].ravel(),
+                    gain_sum=sums["gain_sum"].ravel(),
+                )
+            )
+        )
     data = dict(X=X, y=y, weights=weights, sets=sampled, features=list(features))
-    payloads = [dict(run_id=rid, view=v.name, payload=json.dumps(v.collect(run, explainer, data), allow_nan=False))
-                for v in model_views() if v.applies_to(info)]
-    return dict(runs=pd.DataFrame([info]), sets=pd.DataFrame(sets), stage_loss=pd.concat(stage_loss),
-                summary=pd.concat(summary),
-                view_payload=pd.DataFrame(payloads, columns=["run_id", "view", "payload"]))
+    payloads = [
+        dict(run_id=rid, view=v.name, payload=json.dumps(v.collect(run, explainer, data), allow_nan=False))
+        for v in model_views()
+        if v.applies_to(info)
+    ]
+    return dict(
+        runs=pd.DataFrame([info]),
+        sets=pd.DataFrame(sets),
+        stage_loss=pd.concat(stage_loss),
+        summary=pd.concat(summary),
+        view_payload=pd.DataFrame(payloads, columns=["run_id", "view", "payload"]),
+    )
 
 
-def summarize(runs: list[Run], X, y, store: Store, *, levels: list[Level], features: list[str],
-              loss: Callable, grad: Callable | None = None, weights=None, max_rows: int | None = 5000,
-              seed: int = 0, n_jobs: int = 1, cross_eval: bool = False) -> list[str]:
+def summarize(
+    runs: list[Run],
+    X,
+    y,
+    store: Store,
+    *,
+    levels: list[Level],
+    features: list[str],
+    loss: Callable,
+    grad: Callable | None = None,
+    weights=None,
+    max_rows: int | None = 5000,
+    seed: int = 0,
+    n_jobs: int = 1,
+    cross_eval: bool = False,
+) -> list[str]:
     """Write the sums of all runs to the store and return the ids (list[str]) of the runs that were not in the cache."""
     paths = [r.path for r in runs]
     if len(set(paths)) != len(paths):
@@ -217,8 +281,12 @@ def summarize(runs: list[Run], X, y, store: Store, *, levels: list[Level], featu
     todo = [r for r in runs if run_id(r.path) not in cached]
 
     with ThreadPoolExecutor(max_workers=n_jobs) as pool:
-        new = list(pool.map(lambda r: _summarize_run(r, keys[run_id(r.path)], X, y, weights, features,
-                                                     loss, grad, max_rows, seed), todo))
+        new = list(
+            pool.map(
+                lambda r: _summarize_run(r, keys[run_id(r.path)], X, y, weights, features, loss, grad, max_rows, seed),
+                todo,
+            )
+        )
     order = {rid: i for i, rid in enumerate(keys)}
     frames = {}
     for table in ("runs", "sets", "stage_loss", "summary", "view_payload"):
@@ -226,6 +294,10 @@ def summarize(runs: list[Run], X, y, store: Store, *, levels: list[Level], featu
         frame = pd.concat([kept[kept.run_id.isin(cached)], *(n[table] for n in new)], ignore_index=True)
         frames[table] = frame.sort_values("run_id", key=lambda s: s.map(order), kind="stable", ignore_index=True)
     store.replace_runs(frames)
-    store.write("levels", pd.DataFrame(dict(depth=range(len(levels)), name=[lv.name for lv in levels],
-                                            ordered=[lv.ordered for lv in levels])))
+    store.write(
+        "levels",
+        pd.DataFrame(
+            dict(depth=range(len(levels)), name=[lv.name for lv in levels], ordered=[lv.ordered for lv in levels])
+        ),
+    )
     return [run_id(r.path) for r in todo]

@@ -1,4 +1,5 @@
 """Explainers: one adapter for each model type. The core calls them through the `Explainer` contract only."""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ _LIGHTGBM_LOCK = threading.Lock()
 
 class LightGBMExplainer:
     """Slices of a LightGBM booster (lightgbm.Booster): one slice for each boosting round."""
+
     stage_label = "Boosting round"
 
     def __init__(self, model):
@@ -37,6 +39,7 @@ class LightGBMExplainer:
 
 class XGBoostExplainer:
     """Slices of an XGBoost booster (xgboost.core.Booster): one slice for each round up to `best_iteration` (int | None)."""
+
     stage_label = "Boosting round"
 
     def __init__(self, model, best_iteration: int | None = None, missing: float = np.nan):
@@ -56,8 +59,9 @@ class XGBoostExplainer:
         """Yield the attributions (np.ndarray) of each boosting round in the raw score space."""
         import xgboost
 
-        data = xgboost.DMatrix(X, missing=self.missing, feature_names=self.model.feature_names,
-                               feature_types=self.model.feature_types)
+        data = xgboost.DMatrix(
+            X, missing=self.missing, feature_names=self.model.feature_names, feature_types=self.model.feature_types
+        )
         # A gblinear booster ignores the range.
         yield self.model.predict(data, pred_contribs=True, iteration_range=(0, 1))
         # XGBoost adds the base score of the model to the base term of each call. A zero margin removes it
@@ -66,11 +70,12 @@ class XGBoostExplainer:
         for t in range(1, self.n_stages):
             # XGBoost refuses a contribution range that does not start at round 0, so each later round is a
             # slice of the model.
-            yield self.model[t:t + 1].predict(data, pred_contribs=True)
+            yield self.model[t : t + 1].predict(data, pred_contribs=True)
 
 
 class CatBoostExplainer:
     """Slices of a CatBoost model (catboost.core.CatBoost) with symmetric trees: one slice for each boosting round."""
+
     stage_label = "Boosting round"
 
     def __init__(self, model):
@@ -93,6 +98,7 @@ class CatBoostExplainer:
 
 class LinearExplainer:
     """Slices of a linear model with `coef_` and `intercept_` (scikit-learn): one slice in closed form."""
+
     n_stages = 1
     stage_label = "Model"
 
@@ -111,6 +117,7 @@ class LinearExplainer:
 
 class ShapExplainer:
     """One slice from an explainer of the `shap` library (for example shap.TreeExplainer) in the raw score space."""
+
     n_stages = 1
 
     def __init__(self, shap_explainer, stage_label: str = "Model"):
@@ -131,10 +138,15 @@ def _tree_shap(model) -> ShapExplainer:
     if len(getattr(model, "classes_", ())) > 2:
         raise TypeError("multiclass and multi-output models are not supported")
     # shap reads these models wrong, and its additivity check compares with its own copy of the trees.
-    if (getattr(model, "loss", None) == "exponential" or np.any(getattr(model, "is_categorical_", None))
-            or (hasattr(model, "classes_") and getattr(getattr(model, "init_", None), "strategy", "prior") != "prior")):
-        raise ValueError("shap gives no exact raw score for loss='exponential', for categorical features "
-                         "or for a classifier init other than the class prior")
+    if (
+        getattr(model, "loss", None) == "exponential"
+        or np.any(getattr(model, "is_categorical_", None))
+        or (hasattr(model, "classes_") and getattr(getattr(model, "init_", None), "strategy", "prior") != "prior")
+    ):
+        raise ValueError(
+            "shap gives no exact raw score for loss='exponential', for categorical features "
+            "or for a classifier init other than the class prior"
+        )
     import shap
 
     return ShapExplainer(shap.TreeExplainer(model))
@@ -142,6 +154,7 @@ def _tree_shap(model) -> ShapExplainer:
 
 class PrecomputedExplainer:
     """Slices from arrays of the caller: (rows of the shared X, features + 1) or (stages, rows, features + 1)."""
+
     by_index = True
 
     def __init__(self, attributions: np.ndarray, stage_label: str = "Stage"):
@@ -175,6 +188,7 @@ class CheckpointExplainer:
 
 class OneStageExplainer:
     """One-stage form of a staged explainer (Explainer), for a report that also has one-stage runs."""
+
     n_stages = 1
     stage_label = "Model"
 
@@ -192,12 +206,19 @@ def register_builtin_explainers() -> None:
     register_explainer("lightgbm.basic.Booster", LightGBMExplainer)
     register_explainer("lightgbm.sklearn.LGBMModel", lambda model: LightGBMExplainer(model.booster_))
     register_explainer("xgboost.core.Booster", XGBoostExplainer)
-    register_explainer("xgboost.sklearn.XGBModel", lambda model: XGBoostExplainer(
-        model.get_booster(), getattr(model, "best_iteration", None), model.missing))
+    register_explainer(
+        "xgboost.sklearn.XGBModel",
+        lambda model: XGBoostExplainer(model.get_booster(), getattr(model, "best_iteration", None), model.missing),
+    )
     register_explainer("catboost.core.CatBoost", CatBoostExplainer)
     for name in ("_base.LinearModel", "_base.LinearClassifierMixin", "_stochastic_gradient.BaseSGDRegressor"):
         register_explainer(f"sklearn.linear_model.{name}", LinearExplainer)
-    for name in ("_forest.RandomForestRegressor", "_forest.ExtraTreesRegressor", "_gb.GradientBoostingRegressor",
-                 "_gb.GradientBoostingClassifier", "_hist_gradient_boosting.gradient_boosting.HistGradientBoostingRegressor",
-                 "_hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier"):
+    for name in (
+        "_forest.RandomForestRegressor",
+        "_forest.ExtraTreesRegressor",
+        "_gb.GradientBoostingRegressor",
+        "_gb.GradientBoostingClassifier",
+        "_hist_gradient_boosting.gradient_boosting.HistGradientBoostingRegressor",
+        "_hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier",
+    ):
         register_explainer(f"sklearn.ensemble.{name}", _tree_shap)

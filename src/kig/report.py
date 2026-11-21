@@ -1,4 +1,5 @@
 """Report: the data payload of the report and the builder of the static HTML file."""
+
 from __future__ import annotations
 
 import html
@@ -25,22 +26,27 @@ def _nodes(store: Store, paths: list[tuple[str, ...]], features: list[str]) -> d
     nodes = {}
     for path in paths:
         for depth in range(len(path) + 1):
-            node = nodes.setdefault("/".join(path[:depth]),
-                                    dict(path=list(path[:depth]), children=[], own=None, nested=None))
+            node = nodes.setdefault(
+                "/".join(path[:depth]), dict(path=list(path[:depth]), children=[], own=None, nested=None)
+            )
             if depth < len(path) and path[depth] not in node["children"]:
                 node["children"].append(path[depth])
     for node in nodes.values():
         node["children"].sort()
     for (node, source, name), g in node_table(store).groupby(["node", "source", "set"], sort=False):
         g = g.set_index("feature").loc[features]
-        nodes[node][source] = {**(nodes[node][source] or {}),
-                               name: dict(n=float(g.n.iloc[0]), gain=_sig(g.gain), abs=_sig(g.mean_abs))}
+        nodes[node][source] = {
+            **(nodes[node][source] or {}),
+            name: dict(n=float(g.n.iloc[0]), gain=_sig(g.gain), abs=_sig(g.mean_abs)),
+        }
     return nodes
 
 
 def _run_tables(summary, stage_loss, counts: dict[str, float], features: list[str]) -> dict:
-    loss = {name: (g.sort_values("stage").loss_sum / counts[name]).to_numpy()
-            for name, g in stage_loss.groupby("set", sort=False)}
+    loss = {
+        name: (g.sort_values("stage").loss_sum / counts[name]).to_numpy()
+        for name, g in stage_loss.groupby("set", sort=False)
+    }
     n_stages = len(next(iter(loss.values())))
     stages = set(np.round(np.geomspace(1, n_stages, min(n_stages, MAX_BAR_STAGES))).astype(int) - 1)
     stages |= {int(np.argmin(v)) for name, v in loss.items() if name != TRAIN}
@@ -65,16 +71,25 @@ def report_data(store: Store) -> dict:
         counts = dict(zip(mine.set, mine.n))
         stored = payloads[payloads.run_id == run.run_id].set_index("view").payload
         out[run.run_id] = dict(
-            path=list(run.path), note=run.note, model_kind=run.model_kind, n_stages=int(run.n_stages),
+            path=list(run.path),
+            note=run.note,
+            model_kind=run.model_kind,
+            n_stages=int(run.n_stages),
             stage_label=run.stage_label,
             sets={s.set: dict(n=float(s.n), overlap=int(s.overlap_with_train)) for s in mine.itertuples()},
-            **_run_tables(summary[summary.run_id == run.run_id], stage_loss[stage_loss.run_id == run.run_id],
-                          counts, features),
-            views=[dict(name=name, payload=json.loads(stored[name])) for name in registered if name in stored.index])
+            **_run_tables(
+                summary[summary.run_id == run.run_id], stage_loss[stage_loss.run_id == run.run_id], counts, features
+            ),
+            views=[dict(name=name, payload=json.loads(stored[name])) for name in registered if name in stored.index],
+        )
     levels = store.read("levels").sort_values("depth")
-    return dict(version=version("kig"), features=features,
-                levels=[dict(name=lv.name, ordered=bool(lv.ordered)) for lv in levels.itertuples()],
-                nodes=_nodes(store, list(runs.path), features), runs=out)
+    return dict(
+        version=version("kig"),
+        features=features,
+        levels=[dict(name=lv.name, ordered=bool(lv.ordered)) for lv in levels.itertuples()],
+        nodes=_nodes(store, list(runs.path), features),
+        runs=out,
+    )
 
 
 def _embed(value) -> str:
@@ -84,12 +99,21 @@ def _embed(value) -> str:
 def build_report(store: Store, out: str | Path, title: str = "kig report") -> Path:
     """Write the report as one static HTML file with all data, styles and scripts inside; return its path (Path)."""
     static = files("kig").joinpath("static")
-    text = {name: static.joinpath(name).read_text(encoding="utf-8")
-            for name in ("report.html", "view.html", "report.css", "app.js")}
-    views = "".join(Template(text["view.html"]).substitute(js=v.js.replace("</script", "<\\/script"), name=_embed(v.name))
-                    for v in model_views())
-    page = Template(text["report.html"]).substitute(title=html.escape(title), css=text["report.css"],
-                                                    data=_embed(report_data(store)), views=views, app=text["app.js"])
+    text = {
+        name: static.joinpath(name).read_text(encoding="utf-8")
+        for name in ("report.html", "view.html", "report.css", "app.js")
+    }
+    views = "".join(
+        Template(text["view.html"]).substitute(js=v.js.replace("</script", "<\\/script"), name=_embed(v.name))
+        for v in model_views()
+    )
+    page = Template(text["report.html"]).substitute(
+        title=html.escape(title),
+        css=text["report.css"],
+        data=_embed(report_data(store)),
+        views=views,
+        app=text["app.js"],
+    )
     out = Path(out)
     out.write_text(page, encoding="utf-8")
     return out

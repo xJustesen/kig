@@ -17,12 +17,14 @@ runs = [
 ]
 levels = [Level("Walk-forward step", ordered=True), Level("K-fold", ordered=False)]
 
-def loss(y, raw):            # per row, in the raw score space
+
+def loss(y, raw):  # per row, in the raw score space
     return 0.5 * (raw - y) ** 2
 
-store = Store("kig-store")   # Parquet files in one directory
+
+store = Store("kig-store")  # Parquet files in one directory
 summarize(runs, X, y, store, levels=levels, features=names, loss=loss)
-build_report(store, "report.html")   # one static HTML file, no server
+build_report(store, "report.html")  # one static HTML file, no server
 ```
 
 - `X` must take a NumPy index array for its rows, for example a NumPy array. `y` can be an array or a pandas Series.

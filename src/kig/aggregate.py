@@ -1,4 +1,5 @@
 """Aggregation: pool the sums of the store along the path hierarchy."""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -16,19 +17,26 @@ def node_table(store: Store) -> pd.DataFrame:
         raise ValueError("the staged split and the one-stage split must not be in one group view")
 
     summary = store.read("summary").sort_values("stage", kind="stable")
-    totals = (summary.groupby(["run_id", "set", "feature"], sort=False)
-              .agg(gain_sum=("gain_sum", "sum"), abs_sum=("abs_sum", "last")).reset_index()
-              .merge(store.read("sets")[["run_id", "set", "n"]], on=["run_id", "set"])
-              .merge(runs[["run_id", "path"]], on="run_id"))
+    totals = (
+        summary.groupby(["run_id", "set", "feature"], sort=False)
+        .agg(gain_sum=("gain_sum", "sum"), abs_sum=("abs_sum", "last"))
+        .reset_index()
+        .merge(store.read("sets")[["run_id", "set", "n"]], on=["run_id", "set"])
+        .merge(runs[["run_id", "path"]], on="run_id")
+    )
 
     paths = set(runs.path)
-    terminal = {p for p in paths if not any(len(q) > len(p) and q[:len(p)] == p for q in paths)}
+    terminal = {p for p in paths if not any(len(q) > len(p) and q[: len(p)] == p for q in paths)}
     own = totals.assign(node=totals.path.map("/".join), source=OWN)
     below = totals[totals.path.isin(terminal)]
     prefixes = below.path.map(lambda p: ["/".join(p[:d]) for d in range(len(p))])
     nested = below.assign(node=prefixes, source=NESTED).explode("node").dropna(subset="node")
-    table = (pd.concat([own, nested]).groupby(["node", "source", "set", "feature"], sort=False)
-             [["gain_sum", "abs_sum", "n"]].sum().reset_index())
+    table = (
+        pd.concat([own, nested])
+        .groupby(["node", "source", "set", "feature"], sort=False)[["gain_sum", "abs_sum", "n"]]
+        .sum()
+        .reset_index()
+    )
     return table.assign(gain=table.gain_sum / table.n, mean_abs=table.abs_sum / table.n)
 
 

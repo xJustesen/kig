@@ -1,4 +1,5 @@
 """Model views: plug-in views of one run. The stage view and the summary view are part of the package."""
+
 from __future__ import annotations
 
 from importlib.resources import files
@@ -8,6 +9,7 @@ from kig.core import register_view
 
 class StageView:
     """Stage time-lapse, loss chart and bars of a run with more than one stage; it reads the standard tables only."""
+
     name = "Stages"
     js = files("kig").joinpath("static/stage_view.js").read_text(encoding="utf-8")
 
@@ -22,6 +24,7 @@ class StageView:
 
 class SummaryView:
     """Bars of the full model with no stage control; it applies to each run and reads the standard tables only."""
+
     name = "Summary"
     js = files("kig").joinpath("static/summary_view.js").read_text(encoding="utf-8")
 

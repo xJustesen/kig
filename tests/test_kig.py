@@ -1,4 +1,5 @@
 """Acceptance tests at the four seams: summary pass, aggregation, report data and extension contracts."""
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -8,7 +9,13 @@ import pytest
 import toy
 from kig.aggregate import group_view
 from kig.core import Level, Run, explainer_for, register_explainer, register_view, summarize
-from kig.explainers import CheckpointExplainer, LightGBMExplainer, LinearExplainer, OneStageExplainer, PrecomputedExplainer
+from kig.explainers import (
+    CheckpointExplainer,
+    LightGBMExplainer,
+    LinearExplainer,
+    OneStageExplainer,
+    PrecomputedExplainer,
+)
 from kig.report import report_data
 from kig.store import SCHEMA, Store
 
@@ -55,10 +62,18 @@ def linear():
     rng = np.random.default_rng(1)
     X = rng.normal(size=(300, 3))
     y = X @ np.array([1.0, -0.5, 0.0]) + rng.normal(size=300)
-    runs = [Run(("fold=1",), LinearModel(np.array([0.9, -0.4, 0.3]), 0.1),
-                dict(train=np.arange(0, 150), valid=np.arange(150, 300))),
-            Run(("fold=2",), LinearModel(np.array([1.1, -0.6, -0.2]), -0.1),
-                dict(train=np.arange(140, 300), valid=np.arange(0, 150)))]
+    runs = [
+        Run(
+            ("fold=1",),
+            LinearModel(np.array([0.9, -0.4, 0.3]), 0.1),
+            dict(train=np.arange(0, 150), valid=np.arange(150, 300)),
+        ),
+        Run(
+            ("fold=2",),
+            LinearModel(np.array([1.1, -0.6, -0.2]), -0.1),
+            dict(train=np.arange(140, 300), valid=np.arange(0, 150)),
+        ),
+    ]
     return X, y, runs
 
 
@@ -200,8 +215,15 @@ def test_cross_evaluation_adds_the_validation_rows_of_the_sibling_runs(linear, t
 def test_precomputed_attributions_give_the_sums_of_the_model(linear, tmp_path):
     X, y, runs = linear
     store, _ = linear_store(linear, tmp_path / "1")
-    pre = [Run(r.path, None, r.sets, explainer=PrecomputedExplainer(
-        np.column_stack([X * r.model.coef, np.full(300, r.model.intercept)]))) for r in runs]
+    pre = [
+        Run(
+            r.path,
+            None,
+            r.sets,
+            explainer=PrecomputedExplainer(np.column_stack([X * r.model.coef, np.full(300, r.model.intercept)])),
+        )
+        for r in runs
+    ]
     other = Store(tmp_path / "2")
     summarize(pre, X, y, other, levels=LINEAR_LEVELS, features=LINEAR_FEATURES, loss=toy.mse_loss)
     pd.testing.assert_frame_equal(other.read("summary"), store.read("summary"))
@@ -218,22 +240,34 @@ def test_group_view_refuses_a_mix_of_staged_and_one_stage_runs(linear, tmp_path)
 
 def lightgbm_wrapper(X, y):
     model = pytest.importorskip("lightgbm").LGBMRegressor(n_estimators=20, verbose=-1).fit(X, y)
-    return (model, lambda rows: model.predict(rows, raw_score=True),
-            lambda rows, k: model.booster_.predict(rows, pred_contrib=True, num_iteration=k), 1e-9)
+    return (
+        model,
+        lambda rows: model.predict(rows, raw_score=True),
+        lambda rows, k: model.booster_.predict(rows, pred_contrib=True, num_iteration=k),
+        1e-9,
+    )
 
 
 def xgboost_booster(X, y):
     xgb = pytest.importorskip("xgboost")
     model = xgb.train(dict(max_depth=3), xgb.DMatrix(X, y), num_boost_round=20)
-    return (model, lambda rows: model.predict(xgb.DMatrix(rows), output_margin=True),
-            lambda rows, k: model.predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)), 1e-4)
+    return (
+        model,
+        lambda rows: model.predict(xgb.DMatrix(rows), output_margin=True),
+        lambda rows, k: model.predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)),
+        1e-4,
+    )
 
 
 def xgboost_wrapper(X, y):
     xgb = pytest.importorskip("xgboost")
     model = xgb.XGBClassifier(n_estimators=20, max_depth=3).fit(X, y > 0)
-    return (model, lambda rows: model.predict(rows, output_margin=True),
-            lambda rows, k: model.get_booster().predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)), 1e-4)
+    return (
+        model,
+        lambda rows: model.predict(rows, output_margin=True),
+        lambda rows, k: model.get_booster().predict(xgb.DMatrix(rows), pred_contribs=True, iteration_range=(0, k)),
+        1e-4,
+    )
 
 
 def catboost_model(X, y):
@@ -244,6 +278,7 @@ def catboost_model(X, y):
         first = model.copy()
         first.shrink(ntree_end=k)
         return first.get_feature_importance(type="ShapValues", data=catboost.Pool(rows))
+
     return model, lambda rows: model.predict(rows, prediction_type="RawFormulaVal"), truncated, 1e-9
 
 
@@ -257,12 +292,17 @@ def sklearn_model(module, name, **params):
             return model, model.decision_function, None, 1e-9
         model = cls(**params).fit(X, y)
         return model, model.predict, None, 1e-9
+
     return pytest.param(family, id=name)
 
 
 FAMILIES = [
-    lightgbm_wrapper, xgboost_booster, xgboost_wrapper, catboost_model,
-    sklearn_model("linear_model", "Ridge"), sklearn_model("linear_model", "LogisticRegression"),
+    lightgbm_wrapper,
+    xgboost_booster,
+    xgboost_wrapper,
+    catboost_model,
+    sklearn_model("linear_model", "Ridge"),
+    sklearn_model("linear_model", "LogisticRegression"),
     sklearn_model("linear_model", "SGDRegressor"),
     sklearn_model("ensemble", "RandomForestRegressor", n_estimators=10, min_samples_leaf=5),
     sklearn_model("ensemble", "ExtraTreesRegressor", n_estimators=10, min_samples_leaf=5),
@@ -323,6 +363,13 @@ def test_one_stage_form_of_a_staged_run_goes_in_a_group_view_with_one_stage_runs
     X, y, runs = linear
     staged = PrecomputedExplainer(np.ones((2, 300, 4)))
     store = Store(tmp_path)
-    summarize([*runs, Run(("fold=3",), None, runs[0].sets, explainer=OneStageExplainer(staged))], X, y, store,
-              levels=LINEAR_LEVELS, features=LINEAR_FEATURES, loss=toy.mse_loss)
+    summarize(
+        [*runs, Run(("fold=3",), None, runs[0].sets, explainer=OneStageExplainer(staged))],
+        X,
+        y,
+        store,
+        levels=LINEAR_LEVELS,
+        features=LINEAR_FEATURES,
+        loss=toy.mse_loss,
+    )
     assert set(group_view(store).child.dropna()) == {"fold=1", "fold=2", "fold=3"}

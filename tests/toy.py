@@ -2,6 +2,7 @@
 
 Run `uv run python tests/toy.py out.html` to build the toy report.
 """
+
 from __future__ import annotations
 
 import sys
@@ -30,8 +31,14 @@ def make_data(seed=0):
     X = rng.normal(size=(len(period), len(FEATURES)))
     regime_on = (period >= 5) & (period <= 8)
     fade = 1.2 * np.clip(1 - (period - 1) / 8, 0, 1)
-    y = (1.5 * X[:, 0] + 1.2 * (X[:, 1] > 0.5) + 1.0 * X[:, 2] * X[:, 3]
-         + 1.5 * regime_on * X[:, 4] + fade * X[:, 5] + rng.normal(scale=1.2, size=len(period)))
+    y = (
+        1.5 * X[:, 0]
+        + 1.2 * (X[:, 1] > 0.5)
+        + 1.0 * X[:, 2] * X[:, 3]
+        + 1.5 * regime_on * X[:, 4]
+        + fade * X[:, 5]
+        + rng.normal(scale=1.2, size=len(period))
+    )
     return X, y, period
 
 
@@ -45,18 +52,31 @@ def make_runs(X, y, period, steps=range(WINDOW + 1, N_PERIODS + 1)) -> list[Run]
         key = f"wf=p{p:02d}"
         window = np.flatnonzero((period >= p - WINDOW) & (period < p))
         forward = np.flatnonzero(period == p)
-        runs.append(Run((key,), fit(X, y, window), dict(train=window, valid=forward),
-                        note=f"train p{p - WINDOW:02d}–p{p - 1:02d}, valid p{p:02d}"))
+        runs.append(
+            Run(
+                (key,),
+                fit(X, y, window),
+                dict(train=window, valid=forward),
+                note=f"train p{p - WINDOW:02d}–p{p - 1:02d}, valid p{p:02d}",
+            )
+        )
         for k, block in enumerate(np.array_split(window, K), start=1):
             keep = (window < block[0] - PURGE) | (window > block[-1] + PURGE)
-            runs.append(Run((key, f"k={k}"), fit(X, y, window[keep]), dict(train=window[keep], valid=block),
-                            note=f"valid block {k} of {K} inside the window, {PURGE} rows purged each side"))
+            runs.append(
+                Run(
+                    (key, f"k={k}"),
+                    fit(X, y, window[keep]),
+                    dict(train=window[keep], valid=block),
+                    note=f"valid block {k} of {K} inside the window, {PURGE} rows purged each side",
+                )
+            )
     return runs
 
 
 if __name__ == "__main__":
     X, y, period = make_data()
     store = Store(tempfile.mkdtemp())
-    summarize(make_runs(X, y, period), X, y, store, levels=LEVELS, features=FEATURES, loss=mse_loss,
-              n_jobs=4, cross_eval=True)
+    summarize(
+        make_runs(X, y, period), X, y, store, levels=LEVELS, features=FEATURES, loss=mse_loss, n_jobs=4, cross_eval=True
+    )
     print("wrote", build_report(store, sys.argv[1] if len(sys.argv) > 1 else "kig-toy.html", title="kig: toy data"))

@@ -1,4 +1,5 @@
 """Store: the tables on disk that hold the sums, as Parquet files in one directory."""
+
 from __future__ import annotations
 
 from pathlib import Path
