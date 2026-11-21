@@ -78,6 +78,8 @@ build_report(store, "report.html")  # one static HTML file, no server
 - The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
   sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.
+- The store is a public interface: other tools can read its Parquet files. The
+  [store schema](docs/store-schema.md) gives each table and column.
 
 <details><summary>Options of <code>summarize</code></summary>
 
