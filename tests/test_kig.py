@@ -418,6 +418,49 @@ def test_summary_pass_with_no_loss_refuses_runs_with_different_losses(linear, tm
         summarize(runs, X, y, Store(tmp_path), levels=LINEAR_LEVELS, features=LINEAR_FEATURES)
 
 
+def scaler_and_ridge(frame, y):
+    pipeline = pytest.importorskip("sklearn.pipeline")
+    steps = (
+        pytest.importorskip("sklearn.preprocessing").StandardScaler(),
+        pytest.importorskip("sklearn.linear_model").Ridge(),
+    )
+    return pipeline.make_pipeline(*steps).fit(frame[["a", "b"]], y), frame[["a", "b"]]
+
+
+def column_transformer_and_booster(frame, y):
+    preprocessing = pytest.importorskip("sklearn.preprocessing")
+    columns = pytest.importorskip("sklearn.compose").ColumnTransformer(
+        [("num", preprocessing.StandardScaler(), ["a", "b"]), ("cat", preprocessing.OneHotEncoder(), ["c"])]
+    )
+    booster = pytest.importorskip("lightgbm").LGBMRegressor(n_estimators=5, verbose=-1)
+    return pytest.importorskip("sklearn.pipeline").make_pipeline(columns, booster).fit(frame, y), frame
+
+
+@pytest.fixture(scope="module")
+def mixed_frame():
+    X, y, _ = toy.make_data(seed=0)
+    frame = pd.DataFrame(X[:600, :2], columns=["a", "b"]).assign(c=np.arange(600) % 10)
+    return frame, y[:600] + 0.3 * frame.c
+
+
+@pytest.mark.parametrize("make", [scaler_and_ridge, column_transformer_and_booster])
+def test_pipeline_gives_the_attributions_of_its_last_step_for_the_transformed_columns(make, mixed_frame, tmp_path):
+    frame, y = mixed_frame
+    model, frame = make(frame, y)
+    store = Store(tmp_path)
+    run = Run(("m",), model, {"valid": np.arange(300, 600)})
+    summarize([run], frame, y, store, levels=LINEAR_LEVELS, features=list(model[:-1].get_feature_names_out()))
+    direct = toy.mse_loss(y[300:], model.predict(frame[300:])).sum()
+    assert store.read("stage_loss").loss_sum.iloc[-1] == pytest.approx(direct)
+
+
+def test_pipeline_refuses_feature_names_that_are_not_its_transformed_columns(mixed_frame, tmp_path):
+    model, frame = column_transformer_and_booster(*mixed_frame)
+    run = Run(("m",), model, {"valid": np.arange(300, 600)})
+    with pytest.raises(ValueError, match="cat__c_9"):
+        summarize([run], frame, mixed_frame[1], Store(tmp_path), levels=LINEAR_LEVELS)
+
+
 MULTICLASS = [
     ("lightgbm", lambda lib: lib.LGBMClassifier(n_estimators=2, verbose=-1)),
     ("xgboost", lambda lib: lib.XGBClassifier(n_estimators=2)),

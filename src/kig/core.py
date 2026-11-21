@@ -202,6 +202,9 @@ def _reduce(explainer: Explainer, rows, y, w, loss, grad, n_feat: int) -> dict[s
 def _summarize_run(run: Run, key: str, X, y, weights, features, loss, grad, max_rows, seed) -> dict[str, pd.DataFrame]:
     rid = run_id(run.path)
     explainer = explainer_for(run)
+    own = getattr(explainer, "features", None)
+    if own is not None and list(own) != list(features):
+        raise ValueError(f"the attributions of run {rid!r} are for the columns {list(own)}: give them as `features`")
     n_stages, n_feat = explainer.n_stages, len(features)
     stage = np.arange(n_stages)
     info = dict(

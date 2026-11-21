@@ -8,7 +8,7 @@ from typing import Iterator
 
 import numpy as np
 
-from kig.core import register_explainer
+from kig.core import Run, explainer_for, register_explainer
 
 
 def _squared_error(y: np.ndarray, raw: np.ndarray) -> np.ndarray:
@@ -253,6 +253,23 @@ class OneStageExplainer:
         yield sum(self.explainer.slices(X))
 
 
+class PipelineExplainer:
+    """Slices of the last step of a pipeline (sklearn.pipeline.Pipeline) for the columns that its other steps give."""
+
+    def __init__(self, model):
+        self.transformer = model[:-1]
+        self.explainer = explainer_for(Run((), model[-1], {}))
+        self.features = list(self.transformer.get_feature_names_out())
+        self.n_stages = self.explainer.n_stages
+        self.stage_label = self.explainer.stage_label
+        self.loss_and_grad = getattr(self.explainer, "loss_and_grad", None)
+
+    def slices(self, X) -> Iterator[np.ndarray]:
+        """Yield the slices (np.ndarray) of the last step for the transformed rows."""
+        rows = self.transformer.transform(X)
+        return self.explainer.slices(rows.toarray() if hasattr(rows, "toarray") else rows)
+
+
 def _xgboost_wrapper(model) -> XGBoostExplainer:
     """Return the explainer (XGBoostExplainer) of a scikit-learn wrapper of XGBoost (xgboost.sklearn.XGBModel)."""
     explainer = XGBoostExplainer(model.get_booster(), getattr(model, "best_iteration", None), model.missing)
@@ -280,3 +297,4 @@ def register_builtin_explainers() -> None:
         "_hist_gradient_boosting.gradient_boosting.HistGradientBoostingClassifier",
     ):
         register_explainer(f"sklearn.ensemble.{name}", _tree_shap)
+    register_explainer("sklearn.pipeline.Pipeline", PipelineExplainer)
