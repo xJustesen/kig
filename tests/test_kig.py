@@ -212,6 +212,32 @@ def test_cross_evaluation_adds_the_validation_rows_of_the_sibling_runs(linear, t
     assert sets.n[("fold=1", "valid@fold=2")] == sets.n[("fold=2", "valid")]
 
 
+def test_frame_gives_the_store_of_its_array_and_its_column_names(linear, tmp_path):
+    X, y, runs = linear
+    store, _ = linear_store(linear, tmp_path / "1")
+    other = Store(tmp_path / "2")
+    summarize(runs, pd.DataFrame(X, columns=LINEAR_FEATURES), y, other, levels=LINEAR_LEVELS, loss=toy.mse_loss)
+    for name in SCHEMA:
+        pd.testing.assert_frame_equal(other.read(name), store.read(name))
+
+
+def test_categorical_column_of_a_frame_goes_to_the_booster_with_its_dtype(tmp_path):
+    X, y, _ = toy.make_data(seed=0)
+    frame = pd.DataFrame(X[:1000, :2], columns=["a", "b"]).assign(c=pd.Categorical(np.where(X[:1000, 4] > 0, "u", "d")))
+    model = pytest.importorskip("lightgbm").LGBMRegressor(n_estimators=5, verbose=-1).fit(frame, y[:1000])
+    idx = np.arange(500, 1000)
+    store = Store(tmp_path)
+    summarize([Run(("m",), model, {"valid": idx})], frame, y, store, levels=LINEAR_LEVELS, loss=toy.mse_loss)
+    direct = toy.mse_loss(y[idx], model.predict(frame.iloc[idx])).sum()
+    assert store.read("stage_loss").loss_sum.iloc[-1] == pytest.approx(direct)
+
+
+def test_array_with_no_feature_names_is_refused(linear, tmp_path):
+    X, y, runs = linear
+    with pytest.raises(TypeError):
+        summarize(runs, X, y, Store(tmp_path), levels=LINEAR_LEVELS, loss=toy.mse_loss)
+
+
 def test_precomputed_attributions_give_the_sums_of_the_model(linear, tmp_path):
     X, y, runs = linear
     store, _ = linear_store(linear, tmp_path / "1")

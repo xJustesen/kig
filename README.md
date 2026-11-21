@@ -73,8 +73,9 @@ summarize(runs, X, y, store, levels=levels, features=names, loss=loss)
 build_report(store, "report.html")  # one static HTML file, no server
 ```
 
-- `X` must take a NumPy index array for its rows, for example a NumPy array. `y` can be an array
-  or a pandas Series.
+- `X` must take a NumPy index array for its rows, for example a NumPy array, or be a pandas
+  DataFrame. For a DataFrame, `features` defaults to its column names and the model gets the rows
+  with their dtypes, for example categorical columns. `y` can be an array or a pandas Series.
 - The set names `train` and `valid` have a meaning: the report uses them for the metrics. More
   sets are permitted.
 - `kig.aggregate.group_view(store, prefix)` gives the table of one group view.

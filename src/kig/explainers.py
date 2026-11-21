@@ -88,7 +88,7 @@ class CatBoostExplainer:
         """Yield the attributions (np.ndarray) of each boosting round in the raw score space."""
         from catboost import Pool
 
-        pool = Pool(X)
+        pool = Pool(X, cat_features=self.model.get_cat_feature_indices())
         for t in range(self.n_stages):
             # CatBoost has no tree range for SHAP values. shrink keeps the model bias only in the copy that starts at tree 0.
             tree = self.model.copy()
